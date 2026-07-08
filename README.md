@@ -16,32 +16,44 @@ ever written back to TeslaMate.
 
 ## Features
 
-- **Map-first.** Every drive is drawn from its GPS trace and **colored by speed** (a perceptual
-  light-to-deep blue ramp), so you can read where you go fast and where you crawl at a glance.
-- **Charging on the same map.** Sessions are **clustered by location within 50 m** into a single
-  marker that shows the session count, total energy, and AC/DC split. Click any cluster for details.
-- **Per-car.** Multi-car aware. Pick a vehicle by its TeslaMate name (or view all cars combined);
-  the whole dashboard filters to it.
-- **Any timeframe.** All time, last year, 90 days, or 30 days, with a loading indicator while data
-  refreshes.
-- **Headline stats.** Distance, drives, energy, and charging sessions for the current selection.
-- **Layer toggles.** Show drives, charging, or both (both by default).
-- **3D buildings & globe.** Buildings extrude as you zoom and tilt into a city; the world renders on a
-  globe projection.
-- **Light, fast UI.** MapLibre + vanilla JS, no build step, served straight from the binary.
+- **Map-first.** Every drive is drawn from its GPS trace and **colored by speed** (a light-to-deep
+  blue ramp with a white casing), so you can read where you go fast and where you crawl at a glance.
+- **Presentation mode.** Tick any drives and charges in the activity feed to **isolate them on the
+  map** — build the exact route you want to walk someone through, then Focus map to frame it.
+  Shift-click range-selects; **Share** serializes the selection into a URL you can send around.
+- **Detail panels.** Click any drive — in the feed, or its route on the map — for a stat grid,
+  state-of-charge bar, and a **speed + battery chart** over the trip. Click a charge (or its marker)
+  for the real **charging curve** (power vs. state of charge) with peak/avg/min power and range
+  added. Step through activities with ‹ › without leaving the panel.
+- **Trip summary.** Turn a selection into a route-planner-style itinerary: departure → drive legs →
+  charge stops (with SoC bars and energy) → arrival, plus drive/charge time totals.
+- **Activity feed.** Drives and charging sessions merged newest-first, with type filters
+  (All / Drives / Charging) and an eye toggle that hides home & destination charging from both the
+  list and the map.
+- **Charge classification.** Supercharger stops (DC fast charging), home charging (inside a named
+  geofence), and destination charging are told apart from the data, not hardcoded, and get distinct
+  markers.
+- **KPI cards.** Distance, drives, energy, and efficiency for the range — each with a delta against
+  the prior period of equal length and a sparkline of the trend.
+- **Any timeframe.** All time, last year, 90 days, 30 days, or a custom From/To range with quick
+  presets.
+- **Per-car.** Multi-car aware; pick a vehicle in the header and the whole dashboard filters to it.
+- **One binary.** React + MapLibre frontend built once and embedded; served straight from the Go
+  binary.
 
 ## Quick start (demo, no database)
 
 ```bash
-docker build -t teslamate-dash .
+docker build -f docker/Dockerfile -t teslamate-dash .
 docker run --rm -p 4001:4001 teslamate-dash
 # open http://localhost:4001  (DEMO mode with synthetic data)
 ```
 
-Or with Go (1.22+):
+Or with Go (1.22+) and Node (20+):
 
 ```bash
-go run .          # demo mode when no DATABASE_HOST/TC_DSN is set
+(cd src/web && npm install && npm run build)   # build the embedded UI first
+go run ./src      # demo mode when no DATABASE_HOST/TC_DSN is set
 ```
 
 ### Published image
@@ -74,7 +86,9 @@ Or add it to your existing TeslaMate `docker-compose.yml` as another service:
 
 ```yaml
   dash:
-    build: ./teslamate-dash   # or image: ghcr.io/youruser/teslamate-dash
+    build:                    # or image: ghcr.io/youruser/teslamate-dash
+      context: ./teslamate-dash
+      dockerfile: docker/Dockerfile
     environment:
       - DATABASE_HOST=database
       - DATABASE_USER=teslamate_ro
@@ -219,8 +233,6 @@ All configuration is via environment variables. `TC_`-prefixed names override th
 | `TC_UNITS` | `km` | `km` or `mi` |
 | `TC_TITLE` | `TeslaMate Dash` | Header title |
 | `TC_MAP_STYLE_URL` | OpenFreeMap Positron | MapLibre style URL. Point at your own tiles for full privacy. |
-| `TC_DOWNSAMPLE` | `4` | Keep every Nth GPS point when drawing routes (higher is lighter) |
-| `TC_REDACT_HOME` | `true` | Reserved flag for hiding the home area in shareable views. Parsed and exposed on `/api/config`, but not yet enforced, so it currently has no visible effect. |
 | `TC_DEMO` | auto | Force synthetic data on or off |
 
 ## Privacy
@@ -236,27 +248,41 @@ This data is your home address, geofences, and full movement history. The app is
 
 ## How it works
 
-A single Go binary embeds the web UI and talks to Postgres over a read-only `pgx` pool. The frontend is
-MapLibre GL plus a little vanilla JS, with no build step.
+A single Go binary embeds the built web UI and talks to Postgres over a read-only `pgx` pool. The
+frontend is React + TypeScript (Vite) with MapLibre GL; position traces are simplified server-side
+(Douglas-Peucker) so map payloads stay small even for six-hour drives.
 
 | File | Role |
 |---|---|
-| `main.go` | HTTP server, graceful shutdown, embeds `web/` |
-| `config.go` | Environment configuration |
-| `model.go` | Types and the `Store` interface |
-| `db.go` | Read-only pgx pool and all SQL (the only file that touches Postgres) |
-| `demo.go` | Synthetic data so it runs with no database |
-| `handlers.go` | JSON API |
-| `web/` | Embedded MapLibre + vanilla JS frontend |
+| `src/main.go` | HTTP server, graceful shutdown, embeds `src/web/dist` |
+| `src/config.go` | Environment configuration |
+| `src/model.go` | Types, the `Store` interface, trace simplification |
+| `src/db.go` | Read-only pgx pool and all SQL (the only file that touches Postgres) |
+| `src/demo.go` | Synthetic data so it runs with no database |
+| `src/handlers.go` | JSON API (`/api/config`, `/api/cars`, `/api/summary`, `/api/activities`, `/api/activities/{id}`) |
+| `src/web/` | React + Vite + TypeScript frontend, built to `src/web/dist` |
+| `docker/` | Dockerfile and its dockerignore |
 
 ## Development
 
 ```bash
+(cd src/web && npm install && npm run build)   # required once before go build/run
 go mod tidy
-go run .                 # demo mode if no DATABASE_HOST
+go run ./src             # demo mode if no DATABASE_HOST
 # point at a database:
-DATABASE_HOST=localhost DATABASE_PASS=secret go run .
+DATABASE_HOST=localhost DATABASE_PASS=secret go run ./src
 ```
+
+For frontend work, run the API and the Vite dev server side by side; Vite proxies `/api` to `:4001`:
+
+```bash
+go run ./src                 # terminal 1
+cd src/web && npm run dev    # terminal 2, open the printed URL
+```
+
+The Docker image always builds with the **repo root as context** (`docker build -f docker/Dockerfile .`);
+the frontend is built inside the image, so no local `npm` run is needed for container builds. BuildKit
+(the default builder since Docker 23) automatically applies `docker/Dockerfile.dockerignore`.
 
 Tested against the TeslaMate schema tables `drives`, `positions`, `charging_processes`, `charges`,
 `addresses`, `geofences`, `cars`. The app checks these exist on startup and fails with a clear message

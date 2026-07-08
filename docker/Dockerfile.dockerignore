@@ -7,3 +7,6 @@ docs/
 /teslamate-companion
 /teslamate-dash
 *.exe
+src/web/node_modules/
+src/web/dist/
+*.dc.html

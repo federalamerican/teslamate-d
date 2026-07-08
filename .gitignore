@@ -3,3 +3,5 @@
 *.exe
 .env
 .DS_Store
+src/web/node_modules/
+src/web/dist/

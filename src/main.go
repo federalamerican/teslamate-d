@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-//go:embed web
+//go:embed all:web/dist
 var webFS embed.FS
 
 func main() {
@@ -21,7 +21,7 @@ func main() {
 
 	var store Store
 	if cfg.Demo {
-		store = newDemoStore()
+		store = newDemoStore(cfg.Units)
 		log.Printf("DEMO MODE: serving synthetic data, no database connection is made")
 	} else {
 		db, err := openDB(cfg)
@@ -39,7 +39,7 @@ func main() {
 	mux := http.NewServeMux()
 	registerAPI(mux, store, cfg)
 
-	sub, err := fs.Sub(webFS, "web")
+	sub, err := fs.Sub(webFS, "web/dist")
 	if err != nil {
 		log.Fatalf("embed: %v", err)
 	}

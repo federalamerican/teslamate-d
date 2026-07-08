@@ -15,8 +15,6 @@ type Config struct {
 	Demo        bool
 	Units       string // "km" or "mi"
 	MapStyleURL string
-	RedactHome  bool
-	Downsample  int
 	Title       string
 
 	dbHost string
@@ -35,8 +33,6 @@ func loadConfig() Config {
 		Port:        firstEnv("4001", "TC_PORT"),
 		Units:       firstEnv("km", "TC_UNITS"),
 		MapStyleURL: firstEnv("https://tiles.openfreemap.org/styles/positron", "TC_MAP_STYLE_URL"),
-		RedactHome:  envBool("TC_REDACT_HOME", true),
-		Downsample:  envInt("TC_DOWNSAMPLE", 4),
 		Title:       firstEnv("TeslaMate Dash", "TC_TITLE"),
 
 		dbHost: dbHost,
@@ -49,9 +45,6 @@ func loadConfig() Config {
 	// Demo on by default when there is nothing to connect to.
 	noDB := dsn == "" && dbHost == ""
 	c.Demo = envBool("TC_DEMO", noDB)
-	if c.Downsample < 1 {
-		c.Downsample = 1
-	}
 	if c.Units != "mi" {
 		c.Units = "km"
 	}
@@ -89,16 +82,4 @@ func envBool(key string, def bool) bool {
 		return def
 	}
 	return b
-}
-
-func envInt(key string, def int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return def
-	}
-	return n
 }
