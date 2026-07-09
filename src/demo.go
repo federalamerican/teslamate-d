@@ -14,9 +14,10 @@ import (
 // demoStore generates deterministic synthetic data around a fictional area so
 // the app runs and renders with no database. No real locations are used.
 type demoStore struct {
-	drives  []demoDrive
-	charges []demoCharge
-	units   string
+	drives   []demoDrive
+	charges  []demoCharge
+	units    string
+	featured []string
 }
 
 type demoDrive struct {
@@ -191,6 +192,7 @@ func (s *demoStore) addFeaturedTrip(now time.Time) {
 			km: d.Km, durMin: d.DurMin, speedMax: d.SpeedMax,
 			from: d.From, to: d.To, s0: d.S0, s1: d.S1, kwh: d.KWh, coords: d.Coords,
 		})
+		s.featured = append(s.featured, "d"+strconv.Itoa(1500+i))
 	}
 	for i, c := range trip.Charges {
 		s.charges = append(s.charges, demoCharge{
@@ -199,8 +201,11 @@ func (s *demoStore) addFeaturedTrip(now time.Time) {
 			category: "supercharger", title: c.Name,
 			pt: []float64{c.Lng, c.Lat}, curve: c.Curve,
 		})
+		s.featured = append(s.featured, "c"+strconv.Itoa(2500+i))
 	}
 }
+
+func (s *demoStore) Featured() []string { return s.featured }
 
 func (s *demoStore) Cars(ctx context.Context) ([]Car, error) {
 	return []Car{{ID: 1, Name: "Demo", Model: "Model Y"}}, nil

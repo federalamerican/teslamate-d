@@ -24,6 +24,7 @@ func registerAPI(mux *http.ServeMux, s Store, cfg Config) {
 			"units":         cfg.Units,
 			"map_style_url": cfg.MapStyleURL,
 			"demo":          cfg.Demo,
+			"featured_sel":  s.Featured(),
 		})
 	})
 

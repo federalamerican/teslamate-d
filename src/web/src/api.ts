@@ -3,6 +3,7 @@ export type AppConfig = {
   units: 'km' | 'mi'
   map_style_url: string
   demo: boolean
+  featured_sel?: string[] | null
 }
 
 export type Car = { id: number; name: string; model?: string }

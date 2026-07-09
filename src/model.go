@@ -34,6 +34,9 @@ type Store interface {
 	// Detail returns the panel payload for one activity id ("d123" / "c45"),
 	// or nil when the id doesn't exist.
 	Detail(ctx context.Context, id string) (*Detail, error)
+	// Featured returns activity ids the UI should preselect on a fresh load
+	// (no ?sel= in the URL). Empty outside demo mode.
+	Featured() []string
 }
 
 type Car struct {

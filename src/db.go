@@ -398,6 +398,9 @@ func classifyCharge(fast bool, geofence, addrName, city *string) (category, titl
 	}
 }
 
+// Featured preselection is a demo-mode concept; real data has none.
+func (d *DB) Featured() []string { return nil }
+
 // ---- detail -------------------------------------------------------------------
 
 func (d *DB) Detail(ctx context.Context, id string) (*Detail, error) {

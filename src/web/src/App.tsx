@@ -52,6 +52,9 @@ export default function App() {
   const pendingShareRef = useRef<string[] | null>(
     new URLSearchParams(location.search).get('sel')?.split(',').filter(Boolean) ?? null,
   )
+  // Without a shared link, the server's featured selection (demo mode's
+  // showcase trip) is preselected once on the first feed load.
+  const featuredDoneRef = useRef(false)
 
   const [summary, setSummary] = useState<Summary | null>(null)
   const [activities, setActivities] = useState<Activity[]>([])
@@ -101,6 +104,10 @@ export default function App() {
         if (pendingShareRef.current) {
           setSelected(pendingShareRef.current)
           pendingShareRef.current = null
+          featuredDoneRef.current = true
+        } else if (!featuredDoneRef.current) {
+          featuredDoneRef.current = true
+          if (config.featured_sel?.length) setSelected(config.featured_sel)
         }
 
         let all = first
