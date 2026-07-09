@@ -10,9 +10,16 @@ It connects to your existing TeslaMate Postgres database and renders a clean, ma
 driving and charging history. One static Go binary, one container, no second database, and nothing is
 ever written back to TeslaMate.
 
+![TeslaMate Dash demo — drive details, charging curve, and a trip summary](docs/demo.gif)
+
+> The recording above runs in demo mode with synthetic data. Your real data never leaves your machine.
+
+<details>
+<summary>Static screenshot</summary>
+
 ![TeslaMate Dash](docs/screenshot.png)
 
-> The screenshot above runs in demo mode with synthetic data. Your real data never leaves your machine.
+</details>
 
 ## Features
 
@@ -38,8 +45,7 @@ ever written back to TeslaMate.
 - **Any timeframe.** All time, last year, 90 days, 30 days, or a custom From/To range with quick
   presets.
 - **Per-car.** Multi-car aware; pick a vehicle in the header and the whole dashboard filters to it.
-- **One binary.** React + MapLibre frontend built once and embedded; served straight from the Go
-  binary.
+
 
 ## Quick start (demo, no database)
 
