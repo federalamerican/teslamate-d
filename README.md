@@ -10,9 +10,11 @@ It connects to your existing TeslaMate Postgres database and renders a clean, ma
 driving and charging history. One static Go binary, one container, no second database, and nothing is
 ever written back to TeslaMate.
 
+**▶ [Try the live demo](https://demo.teslamate.maslowski.cloud)** — no install, running in demo mode with synthetic data.
+
 ![TeslaMate Dash demo — drive details, charging curve, and a trip summary](docs/demo.gif)
 
-> The recording above runs in demo mode with synthetic data. Your real data never leaves your machine.
+> The recording above (and the live demo) run in demo mode with synthetic data. Your real data never leaves your machine.
 
 <details>
 <summary>Static screenshot</summary>
