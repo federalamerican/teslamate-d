@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	_ "embed"
+	"encoding/json"
 	"math"
 	"math/rand"
 	"sort"
@@ -39,6 +41,41 @@ type demoCharge struct {
 	category string
 	title    string
 	pt       []float64
+	curve    [][]float64 // optional [soc, kw]; synthesized when empty
+}
+
+// demoTripJSON is a real multi-leg road trip donated to the demo dataset:
+// GPS traces, cities, and charging curves are genuine, but it is anchored to
+// a synthetic date and contains no home location.
+//
+//go:embed demo_trip.json
+var demoTripJSON []byte
+
+type demoTrip struct {
+	Drives []struct {
+		OffsetMin int         `json:"offset_min"`
+		Km        float64     `json:"km"`
+		DurMin    int         `json:"dur_min"`
+		SpeedMax  float64     `json:"speed_max"`
+		From      string      `json:"from"`
+		To        string      `json:"to"`
+		S0        int         `json:"s0"`
+		S1        int         `json:"s1"`
+		KWh       float64     `json:"kwh"`
+		Coords    [][]float64 `json:"coords"`
+	} `json:"drives"`
+	Charges []struct {
+		OffsetMin int         `json:"offset_min"`
+		KWh       float64     `json:"kwh"`
+		DurMin    int         `json:"dur_min"`
+		S0        int         `json:"s0"`
+		S1        int         `json:"s1"`
+		PeakKw    float64     `json:"peak_kw"`
+		Name      string      `json:"name"`
+		Lng       float64     `json:"lng"`
+		Lat       float64     `json:"lat"`
+		Curve     [][]float64 `json:"curve"`
+	} `json:"charges"`
 }
 
 // Centre of the synthetic world (a neutral land point used only for demo
@@ -134,7 +171,35 @@ func newDemoStore(units string) *demoStore {
 		addDrive(day-1, 10, lake, hills)
 		addDrive(day-1, 16, hills, home)
 	}
+	s.addFeaturedTrip(now)
 	return s
+}
+
+// addFeaturedTrip loads the embedded real road trip, anchored so it departs
+// five days ago in the evening. IDs are fixed (drives 1500+, charges 2500+)
+// so the trip can be shared with a stable ?sel= URL.
+func (s *demoStore) addFeaturedTrip(now time.Time) {
+	var trip demoTrip
+	if err := json.Unmarshal(demoTripJSON, &trip); err != nil {
+		return
+	}
+	day := now.AddDate(0, 0, -5)
+	anchor := time.Date(day.Year(), day.Month(), day.Day(), 21, 10, 0, 0, now.Location())
+	for i, d := range trip.Drives {
+		s.drives = append(s.drives, demoDrive{
+			id: 1500 + i, start: anchor.Add(time.Duration(d.OffsetMin) * time.Minute),
+			km: d.Km, durMin: d.DurMin, speedMax: d.SpeedMax,
+			from: d.From, to: d.To, s0: d.S0, s1: d.S1, kwh: d.KWh, coords: d.Coords,
+		})
+	}
+	for i, c := range trip.Charges {
+		s.charges = append(s.charges, demoCharge{
+			id: 2500 + i, start: anchor.Add(time.Duration(c.OffsetMin) * time.Minute),
+			kwh: c.KWh, durMin: c.DurMin, s0: c.S0, s1: c.S1, peakKw: c.PeakKw,
+			category: "supercharger", title: c.Name,
+			pt: []float64{c.Lng, c.Lat}, curve: c.Curve,
+		})
+	}
 }
 
 func (s *demoStore) Cars(ctx context.Context) ([]Car, error) {
@@ -297,22 +362,33 @@ func (s *demoStore) Detail(ctx context.Context, id string) (*Detail, error) {
 			continue
 		}
 		det := &Detail{Activity: s.chargeActivity(c)}
-		// Plausible charging taper: flat to ~42% SoC, declining after.
 		sum, minKw := 0.0, c.peakKw
-		steps := max(c.s1-c.s0, 1)
-		for i := 0; i <= steps; i++ {
-			soc := float64(c.s0 + i)
-			f := 1.0
-			if soc < 15 {
-				f = 0.5 + 0.033*soc
-			} else if soc > 42 {
-				f = math.Max(0.1, 1-(soc-42)*0.017)
+		if len(c.curve) > 0 {
+			// Real recorded curve embedded with the featured trip.
+			for _, p := range c.curve {
+				det.Curve = append(det.Curve, CurvePoint{Soc: p[0], Kw: p[1]})
+				sum += p[1]
+				if p[1] < minKw {
+					minKw = p[1]
+				}
 			}
-			kw := math.Round(c.peakKw * f)
-			det.Curve = append(det.Curve, CurvePoint{Soc: soc, Kw: kw})
-			sum += kw
-			if kw < minKw {
-				minKw = kw
+		} else {
+			// Plausible charging taper: flat to ~42% SoC, declining after.
+			steps := max(c.s1-c.s0, 1)
+			for i := 0; i <= steps; i++ {
+				soc := float64(c.s0 + i)
+				f := 1.0
+				if soc < 15 {
+					f = 0.5 + 0.033*soc
+				} else if soc > 42 {
+					f = math.Max(0.1, 1-(soc-42)*0.017)
+				}
+				kw := math.Round(c.peakKw * f)
+				det.Curve = append(det.Curve, CurvePoint{Soc: soc, Kw: kw})
+				sum += kw
+				if kw < minKw {
+					minKw = kw
+				}
 			}
 		}
 		det.AvgKw = math.Round(sum / float64(len(det.Curve)))

@@ -24,7 +24,9 @@ commands take `./src`).
 - **No telemetry, no outbound server calls.** The server must not phone home. Browser-side external
   requests are basemap tiles (configured style URL) and Google Fonts only.
 - **Privacy first.** This is someone's home and movements. Do not log coordinates. Never commit real
-  data; demo data only.
+  data; demo data only. (Owner-approved exception: `src/demo_trip.json` is a real road trip —
+  genuine traces, cities, and charging curves — but it must never contain home locations or real
+  dates; timestamps are stored as relative offsets and anchored at runtime.)
 - **Stay a companion.** Do not modify TeslaMate's schema or write to its tables. Ride alongside.
 
 ## Conventions
