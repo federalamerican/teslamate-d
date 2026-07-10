@@ -15,6 +15,8 @@ type Props = {
   fitVersion: number
   /** what the map actually shows (filters + selection applied) */
   visible: Activity[]
+  /** history pages are still streaming in */
+  loading: boolean
   hasSelection: boolean
   showBadge: boolean
   selSummary: string
@@ -81,7 +83,7 @@ function endpointEl(color: string): HTMLDivElement {
 }
 
 const MapView = forwardRef<MapHandle, Props>(function MapView(
-  { styleUrl, allActivities, fitVersion, visible, hasSelection, showBadge, selSummary, units, detailId, panelOpen, onOpenDetail, children },
+  { styleUrl, allActivities, fitVersion, visible, loading, hasSelection, showBadge, selSummary, units, detailId, panelOpen, onOpenDetail, children },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -106,6 +108,31 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
     top: base, bottom: base, right: base,
     left: panelOpenRef.current ? 410 : base,
   })
+
+  // Single fit path for every trigger, so map-load vs data-arrival ordering
+  // doesn't matter: whichever side is ready last completes the pending fit.
+  // The first fit is instant and frames whatever the map is showing — a
+  // shared/featured selection included; later fits animate to the full
+  // dataset and never override a selection the user is presenting.
+  const didFitRef = useRef(false)
+  const pendingFitRef = useRef(false)
+  const fitNow = () => {
+    const map = mapRef.current
+    if (!map || !loadedRef.current) {
+      pendingFitRef.current = true
+      return
+    }
+    if (didFitRef.current && hasSelectionRef.current) return
+    const b = boundsOf(hasSelectionRef.current ? visibleRef.current : allRef.current)
+    if (!b) {
+      pendingFitRef.current = true
+      return
+    }
+    pendingFitRef.current = false
+    const first = !didFitRef.current
+    didFitRef.current = true
+    map.fitBounds(b, { padding: fitPadding(60), duration: first ? 0 : 700 })
+  }
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
@@ -150,8 +177,7 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
       ;(window as unknown as Record<string, unknown>).__dashMap = map
       loadedRef.current = true
       render(visibleRef.current, hasSelectionRef.current, detailIdRef.current)
-      const b = boundsOf(visibleRef.current)
-      if (b) map.fitBounds(b, { padding: 60, duration: 0 })
+      fitNow()
     })
     return () => {
       ro.disconnect()
@@ -215,13 +241,9 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
   }, [visible, hasSelection, detailId])
 
   // Re-fit when App asks for it (new range's first page, or history finished
-  // streaming) — not on every appended page, and never over a selection the
-  // user is presenting.
+  // streaming) — not on every appended page.
   useEffect(() => {
-    const map = mapRef.current
-    if (!map || !loadedRef.current || hasSelectionRef.current) return
-    const b = boundsOf(allRef.current)
-    if (b) map.fitBounds(b, { padding: fitPadding(60), duration: 700 })
+    fitNow()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitVersion])
 
@@ -242,6 +264,16 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
   return (
     <div style={{ flex: 1, position: 'relative', minWidth: 0, background: '#dfe3ea' }}>
       <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
+
+      {loading && (
+        <div style={{ ...glass, position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 3, display: 'flex', alignItems: 'center', gap: 9, borderRadius: 11, padding: '8px 14px' }}>
+          <svg className="spin" width="14" height="14" viewBox="0 0 16 16">
+            <circle cx="8" cy="8" r="6" stroke="var(--muted)" strokeWidth="2.2" fill="none" opacity="0.35" />
+            <path d="M8 2 a6 6 0 0 1 6 6" stroke="#e0223a" strokeWidth="2.2" fill="none" strokeLinecap="round" />
+          </svg>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>Loading history…</span>
+        </div>
+      )}
 
       {showBadge && (
         <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 2, display: 'flex', alignItems: 'center', gap: 9, background: 'rgba(224,34,58,0.94)', borderRadius: 11, padding: '8px 14px', boxShadow: '0 6px 22px rgba(0,0,0,0.28)' }}>

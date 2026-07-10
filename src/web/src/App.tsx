@@ -273,6 +273,7 @@ export default function App() {
           allActivities={activities}
           fitVersion={fitVersion}
           visible={mapActs}
+          loading={historyLoading}
           hasSelection={hasSel}
           showBadge={hasSel && !panelOpen}
           selSummary={selSummary}
