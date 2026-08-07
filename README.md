@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/gmaslowski/teslamate-dash/actions/workflows/ci.yml/badge.svg)](https://github.com/gmaslowski/teslamate-dash/actions/workflows/ci.yml)
 [![Docker](https://github.com/gmaslowski/teslamate-dash/actions/workflows/docker.yml/badge.svg)](https://github.com/gmaslowski/teslamate-dash/actions/workflows/docker.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-gmaslowski-FFDD00?logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/gmaslowski)
 
 A small, self-hosted, **read-only dashboard for [TeslaMate](https://github.com/teslamate-org/teslamate)**.
@@ -308,9 +308,14 @@ If this is useful to you, you can support the work here:
 
 ## Disclaimer
 
-Not affiliated with, endorsed by, or sponsored by Tesla, Inc. or TeslaMate. "Tesla" is a trademark of
+This project is an unofficial community tool and is not affiliated with, endorsed by, or supported by
+the official TeslaMate project.
+
+Not affiliated with, endorsed by, or sponsored by Tesla, Inc. either. "Tesla" is a trademark of
 Tesla, Inc. This project only reads data you already collect with TeslaMate.
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE).
+Copyright (c) 2026 Greg Maslowski.
+
+Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). See [`LICENSE`](LICENSE).
