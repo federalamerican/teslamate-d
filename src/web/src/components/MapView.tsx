@@ -30,6 +30,9 @@ type Props = {
 }
 
 type Bounds = [[number, number], [number, number]]
+type Point = [number, number]
+
+const CURRENT_LOCATION_ZOOM = 12
 
 function boundsOf(acts: Activity[]): Bounds | null {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
@@ -45,10 +48,23 @@ function boundsOf(acts: Activity[]): Bounds | null {
   return [[minX, minY], [maxX, maxY]]
 }
 
-function focusedDriveFor(all: Activity[], detailId: string | null): Activity | null {
+function focusedActivityFor(all: Activity[], detailId: string | null): Activity | null {
   if (!detailId) return null
-  const activity = all.find((a) => a.id === detailId)
-  return activity?.kind === 'drive' ? activity : null
+  return all.find((a) => a.id === detailId) ?? null
+}
+
+// The feed is newest first, so the first activity with coordinates provides
+// the car's latest recorded position. A drive ends at its final coordinate;
+// a charge is already represented by one point.
+function currentLocationOf(acts: Activity[]): Point | null {
+  for (const a of acts) {
+    if (a.kind === 'drive' && a.coords?.length) {
+      const p = a.coords[a.coords.length - 1]
+      return [p[0], p[1]]
+    }
+    if (a.kind === 'charge' && a.pt) return [a.pt[0], a.pt[1]]
+  }
+  return null
 }
 
 // Route segments carry their activity id so a map click can open the panel.
@@ -103,7 +119,7 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
   const mapRef = useRef<maplibregl.Map | null>(null)
   const loadedRef = useRef(false)
   const markersRef = useRef<maplibregl.Marker[]>([])
-  const focusedDriveRef = useRef<string | null>(null)
+  const focusedActivityRef = useRef<string | null>(null)
   const visibleRef = useRef(visible)
   visibleRef.current = visible
   const allRef = useRef(allActivities)
@@ -123,38 +139,68 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
     left: panelOpenRef.current ? 410 : base,
   })
 
-  // Single fit path for every trigger, so map-load vs data-arrival ordering
-  // doesn't matter: whichever side is ready last completes the pending fit.
-  // The first fit is instant and frames whatever the map is showing — a
-  // shared/featured selection included; later fits animate to the full
-  // dataset and never override a selection the user is presenting.
+  // Default view centers the latest recorded car position. Explicit shared or
+  // checkbox selections still frame their selected route, and the overview
+  // control below remains available for the complete driving history.
   const didFitRef = useRef(false)
   const pendingFitRef = useRef(false)
-  const fitNow = (force = false) => {
+  const fitDefault = (force = false) => {
     const map = mapRef.current
     if (!map || !loadedRef.current) {
       pendingFitRef.current = true
       return
     }
     if (!force && didFitRef.current && hasSelectionRef.current) return
-    const b = boundsOf(hasSelectionRef.current ? visibleRef.current : allRef.current)
-    if (!b) {
+    pendingFitRef.current = false
+    const first = !didFitRef.current
+
+    if (hasSelectionRef.current) {
+      const b = boundsOf(visibleRef.current)
+      if (!b) {
+        pendingFitRef.current = true
+        return
+      }
+      didFitRef.current = true
+      map.fitBounds(b, { padding: fitPadding(60), duration: first ? 0 : 700, maxZoom: 12 })
+      return
+    }
+
+    const current = currentLocationOf(allRef.current)
+    if (!current) {
       pendingFitRef.current = true
       return
     }
-    pendingFitRef.current = false
-    const first = !didFitRef.current
     didFitRef.current = true
-    map.fitBounds(b, { padding: fitPadding(60), duration: first ? 0 : 700 })
+    map.easeTo({ center: current, zoom: CURRENT_LOCATION_ZOOM, duration: first ? 0 : 700 })
   }
 
-  const fitDrive = (drive: Activity) => {
+  const fitActivity = (activity: Activity) => {
     const map = mapRef.current
     if (!map || !loadedRef.current) return
-    const b = boundsOf([drive])
+
+    if (activity.kind === 'charge' && activity.pt) {
+      didFitRef.current = true
+      map.easeTo({ center: [activity.pt[0], activity.pt[1]], zoom: 15, duration: 700 })
+      return
+    }
+
+    const b = boundsOf([activity])
     if (!b) return
     didFitRef.current = true
     map.fitBounds(b, { padding: fitPadding(60), duration: 700, maxZoom: 15 })
+  }
+
+  const fitOverview = () => {
+    const map = mapRef.current
+    if (!map || !loadedRef.current) return
+    const b = boundsOf(allRef.current)
+    if (b) map.fitBounds(b, { padding: fitPadding(60), duration: 700, maxZoom: 9 })
+  }
+
+  const fitCurrentLocation = () => {
+    const map = mapRef.current
+    const current = currentLocationOf(allRef.current)
+    if (map && current) map.easeTo({ center: current, zoom: CURRENT_LOCATION_ZOOM, duration: 700 })
   }
 
   useEffect(() => {
@@ -199,10 +245,10 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
       // Test/debug hook (see __dash below).
       ;(window as unknown as Record<string, unknown>).__dashMap = map
       loadedRef.current = true
-      const focusedDrive = focusedDriveFor(allRef.current, detailIdRef.current)
-      render(focusedDrive ? [focusedDrive] : visibleRef.current, hasSelectionRef.current, detailIdRef.current)
-      if (focusedDrive) fitDrive(focusedDrive)
-      else fitNow()
+      const focusedActivity = focusedActivityFor(allRef.current, detailIdRef.current)
+      render(focusedActivity ? [focusedActivity] : visibleRef.current, hasSelectionRef.current, detailIdRef.current)
+      if (focusedActivity) fitActivity(focusedActivity)
+      else fitDefault()
     })
     return () => {
       ro.disconnect()
@@ -261,21 +307,21 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
   }
 
   useEffect(() => {
-    const focusedDrive = focusedDriveFor(allActivities, detailId)
-    render(focusedDrive ? [focusedDrive] : visible, hasSelection, detailId)
+    const focusedActivity = focusedActivityFor(allActivities, detailId)
+    render(focusedActivity ? [focusedActivity] : visible, hasSelection, detailId)
 
-    const focusedId = focusedDrive?.id ?? null
-    const previousId = focusedDriveRef.current
-    focusedDriveRef.current = focusedId
-    if (focusedDrive && focusedId !== previousId) fitDrive(focusedDrive)
-    else if (!focusedDrive && previousId) fitNow(true)
+    const focusedId = focusedActivity?.id ?? null
+    const previousId = focusedActivityRef.current
+    focusedActivityRef.current = focusedId
+    if (focusedActivity && focusedId !== previousId) fitActivity(focusedActivity)
+    else if (!focusedActivity && previousId) fitDefault(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, allActivities, hasSelection, detailId])
 
   // Re-fit when App asks for it (new range's first page, or history finished
   // streaming) — not on every appended page.
   useEffect(() => {
-    if (!focusedDriveRef.current) fitNow()
+    if (!focusedActivityRef.current) fitDefault()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitVersion])
 
@@ -331,18 +377,28 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
             <svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 8h10" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>
           </button>
         </div>
-        <button
-          onClick={() => {
-            const b = boundsOf(visibleRef.current)
-            if (b && mapRef.current) mapRef.current.fitBounds(b, { padding: fitPadding(60), duration: 700 })
-          }}
-          title="Fit route"
-          style={{ ...glass, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, cursor: 'pointer', color: 'var(--text)' }}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16">
-            <path d="M2 5V2h3M14 5V2h-3M2 11v3h3M14 11v3h-3" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+        <div style={{ ...glass, display: 'flex', flexDirection: 'column', borderRadius: 12, overflow: 'hidden' }}>
+          <button
+            onClick={fitCurrentLocation}
+            title="Current car location"
+            style={{ width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', borderBottom: '1px solid var(--glass-divider)', cursor: 'pointer', color: 'var(--text)' }}
+          >
+            <svg width="17" height="17" viewBox="0 0 17 17">
+              <circle cx="8.5" cy="8.5" r="3" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <circle cx="8.5" cy="8.5" r="1.2" fill="currentColor" />
+              <path d="M8.5 1.5v2M8.5 13.5v2M1.5 8.5h2M13.5 8.5h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </button>
+          <button
+            onClick={fitOverview}
+            title="Full driving history"
+            style={{ width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text)' }}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16">
+              <path d="M2 5V2h3M14 5V2h-3M2 11v3h3M14 11v3h-3" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div style={{ ...glass, position: 'absolute', bottom: 16, right: 16, zIndex: 2, borderRadius: 14, padding: '14px 16px', minWidth: 186 }}>
