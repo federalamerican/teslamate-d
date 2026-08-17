@@ -45,6 +45,12 @@ function boundsOf(acts: Activity[]): Bounds | null {
   return [[minX, minY], [maxX, maxY]]
 }
 
+function focusedDriveFor(all: Activity[], detailId: string | null): Activity | null {
+  if (!detailId) return null
+  const activity = all.find((a) => a.id === detailId)
+  return activity?.kind === 'drive' ? activity : null
+}
+
 // Route segments carry their activity id so a map click can open the panel.
 function routeFeatures(acts: Activity[]): GeoJSON.Feature[] {
   const out: GeoJSON.Feature[] = []
@@ -97,6 +103,7 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
   const mapRef = useRef<maplibregl.Map | null>(null)
   const loadedRef = useRef(false)
   const markersRef = useRef<maplibregl.Marker[]>([])
+  const focusedDriveRef = useRef<string | null>(null)
   const visibleRef = useRef(visible)
   visibleRef.current = visible
   const allRef = useRef(allActivities)
@@ -123,13 +130,13 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
   // dataset and never override a selection the user is presenting.
   const didFitRef = useRef(false)
   const pendingFitRef = useRef(false)
-  const fitNow = () => {
+  const fitNow = (force = false) => {
     const map = mapRef.current
     if (!map || !loadedRef.current) {
       pendingFitRef.current = true
       return
     }
-    if (didFitRef.current && hasSelectionRef.current) return
+    if (!force && didFitRef.current && hasSelectionRef.current) return
     const b = boundsOf(hasSelectionRef.current ? visibleRef.current : allRef.current)
     if (!b) {
       pendingFitRef.current = true
@@ -139,6 +146,15 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
     const first = !didFitRef.current
     didFitRef.current = true
     map.fitBounds(b, { padding: fitPadding(60), duration: first ? 0 : 700 })
+  }
+
+  const fitDrive = (drive: Activity) => {
+    const map = mapRef.current
+    if (!map || !loadedRef.current) return
+    const b = boundsOf([drive])
+    if (!b) return
+    didFitRef.current = true
+    map.fitBounds(b, { padding: fitPadding(60), duration: 700, maxZoom: 15 })
   }
 
   useEffect(() => {
@@ -183,8 +199,10 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
       // Test/debug hook (see __dash below).
       ;(window as unknown as Record<string, unknown>).__dashMap = map
       loadedRef.current = true
-      render(visibleRef.current, hasSelectionRef.current, detailIdRef.current)
-      fitNow()
+      const focusedDrive = focusedDriveFor(allRef.current, detailIdRef.current)
+      render(focusedDrive ? [focusedDrive] : visibleRef.current, hasSelectionRef.current, detailIdRef.current)
+      if (focusedDrive) fitDrive(focusedDrive)
+      else fitNow()
     })
     return () => {
       ro.disconnect()
@@ -243,14 +261,21 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
   }
 
   useEffect(() => {
-    render(visible, hasSelection, detailId)
+    const focusedDrive = focusedDriveFor(allActivities, detailId)
+    render(focusedDrive ? [focusedDrive] : visible, hasSelection, detailId)
+
+    const focusedId = focusedDrive?.id ?? null
+    const previousId = focusedDriveRef.current
+    focusedDriveRef.current = focusedId
+    if (focusedDrive && focusedId !== previousId) fitDrive(focusedDrive)
+    else if (!focusedDrive && previousId) fitNow(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, hasSelection, detailId])
+  }, [visible, allActivities, hasSelection, detailId])
 
   // Re-fit when App asks for it (new range's first page, or history finished
   // streaming) — not on every appended page.
   useEffect(() => {
-    fitNow()
+    if (!focusedDriveRef.current) fitNow()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitVersion])
 
