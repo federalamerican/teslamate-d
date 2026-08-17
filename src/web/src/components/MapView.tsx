@@ -21,6 +21,8 @@ type Props = {
   detailId: string | null
   /** a detail/trip panel is overlaying the left side of the map */
   panelOpen: boolean
+  /** the trip panel gets a little more breathing room than activity detail */
+  tripSummaryOpen: boolean
   onOpenDetail: (id: string) => void
   children?: ReactNode
 }
@@ -108,7 +110,7 @@ function endpointEl(color: string): HTMLDivElement {
 }
 
 export default function MapView(
-  { styleUrl, allActivities, fitVersion, visible, loading, hasSelection, showBadge, selSummary, units, detailId, panelOpen, onOpenDetail, children }: Props,
+  { styleUrl, allActivities, fitVersion, visible, loading, hasSelection, showBadge, selSummary, units, detailId, panelOpen, tripSummaryOpen, onOpenDetail, children }: Props,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
@@ -117,6 +119,7 @@ export default function MapView(
   const focusedActivityRef = useRef<string | null>(null)
   const selectionKeyRef = useRef<string | null>(null)
   const panelOpenStateRef = useRef(panelOpen)
+  const tripSummaryOpenStateRef = useRef(tripSummaryOpen)
   const visibleRef = useRef(visible)
   visibleRef.current = visible
   const allRef = useRef(allActivities)
@@ -142,32 +145,35 @@ export default function MapView(
   const didFitRef = useRef(false)
   const pendingFitRef = useRef(false)
 
-  const fitActivity = (activity: Activity, duration = 700) => {
+  const fitActivity = (activity: Activity, duration = 700, paddingBase = 60) => {
     const map = mapRef.current
     if (!map || !loadedRef.current) return
 
     if (activity.kind === 'charge' && activity.pt) {
       didFitRef.current = true
-      map.easeTo({ center: [activity.pt[0], activity.pt[1]], zoom: 15, duration })
+      map.easeTo({ center: [activity.pt[0], activity.pt[1]], zoom: 15, duration, padding: fitPadding(paddingBase) })
       return
     }
 
     const b = boundsOf([activity])
     if (!b) return
     didFitRef.current = true
-    map.fitBounds(b, { padding: fitPadding(60), duration, maxZoom: 15 })
+    map.fitBounds(b, { padding: fitPadding(paddingBase), duration, maxZoom: 15 })
   }
 
   const fitActivities = (acts: Activity[], duration = 700) => {
+    // The itinerary panel contains more visual weight than activity detail;
+    // a modestly larger margin keeps the route from feeling cramped.
+    const paddingBase = tripSummaryOpen ? 75 : 60
     if (acts.length === 1) {
-      fitActivity(acts[0], duration)
+      fitActivity(acts[0], duration, paddingBase)
       return
     }
     const map = mapRef.current
     const b = boundsOf(acts)
     if (!map || !loadedRef.current || !b) return
     didFitRef.current = true
-    map.fitBounds(b, { padding: fitPadding(60), duration, maxZoom: 15 })
+    map.fitBounds(b, { padding: fitPadding(paddingBase), duration, maxZoom: 15 })
   }
 
   const fitDefault = (force = false) => {
@@ -283,19 +289,38 @@ export default function MapView(
         )
       }
     }
-    if (!sel) {
-      // Feed is newest first: journey start is the oldest drive, latest
-      // position is the newest drive's end.
-      const drives = acts.filter((a) => a.kind === 'drive' && a.coords && a.coords.length >= 2)
-      const oldest = drives[drives.length - 1]
-      const newest = drives[0]
-      if (oldest?.coords) {
-        const c = oldest.coords[0]
-        markersRef.current.push(new maplibregl.Marker({ element: endpointEl('#e0223a') }).setLngLat([c[0], c[1]]).addTo(mapRef.current!))
-      }
-      if (newest?.coords) {
-        const c = newest.coords[newest.coords.length - 1]
-        markersRef.current.push(new maplibregl.Marker({ element: endpointEl('#111318') }).setLngLat([c[0], c[1]]).addTo(mapRef.current!))
+    // Route endpoints also belong in checkbox-selection mode. Selected drives
+    // are ordered oldest→newest so a multi-drive trip gets one red start,
+    // one black finish, and white stop dots between its drive legs.
+    const drives = acts
+      .filter((a) => a.kind === 'drive' && a.coords && a.coords.length >= 2)
+      .sort((a, b) => a.date.localeCompare(b.date))
+    const firstDrive = drives[0]
+    const lastDrive = drives[drives.length - 1]
+    if (firstDrive?.coords) {
+      const c = firstDrive.coords[0]
+      markersRef.current.push(new maplibregl.Marker({ element: endpointEl('#e0223a') }).setLngLat([c[0], c[1]]).addTo(map))
+    }
+    if (lastDrive?.coords) {
+      const c = lastDrive.coords[lastDrive.coords.length - 1]
+      markersRef.current.push(new maplibregl.Marker({ element: endpointEl('#111318') }).setLngLat([c[0], c[1]]).addTo(map))
+    }
+
+    if (sel && drives.length > 1) {
+      const selectedCharges = acts.filter((a) => a.kind === 'charge' && a.pt)
+      for (let i = 0; i < drives.length - 1; i++) {
+        const drive = drives[i]
+        const nextDrive = drives[i + 1]
+        const fromTime = Date.parse(drive.date)
+        const toTime = Date.parse(nextDrive.date)
+        const hasSelectedChargeBetween = selectedCharges.some((charge) => {
+          const chargeTime = Date.parse(charge.date)
+          return chargeTime > fromTime && chargeTime < toTime
+        })
+        if (!hasSelectedChargeBetween && drive.coords) {
+          const c = drive.coords[drive.coords.length - 1]
+          markersRef.current.push(new maplibregl.Marker({ element: endpointEl('#ffffff') }).setLngLat([c[0], c[1]]).addTo(map))
+        }
       }
     }
     // Test/debug hook: lets headless checks read what the map shows without
@@ -319,19 +344,21 @@ export default function MapView(
     const selectionKey = hasSelection ? visible.map((a) => a.id).join('|') : null
     const previousSelectionKey = selectionKeyRef.current
     const panelChanged = panelOpenStateRef.current !== panelOpen
+    const tripSummaryChanged = tripSummaryOpenStateRef.current !== tripSummaryOpen
     focusedActivityRef.current = focusedId
     selectionKeyRef.current = selectionKey
     panelOpenStateRef.current = panelOpen
+    tripSummaryOpenStateRef.current = tripSummaryOpen
 
     if (focusedActivity) {
       if (focusedId !== previousFocusedId || panelChanged) fitActivity(focusedActivity)
     } else if (hasSelection) {
-      if (selectionKey !== previousSelectionKey || previousFocusedId || panelChanged) fitActivities(visible)
+      if (selectionKey !== previousSelectionKey || previousFocusedId || panelChanged || tripSummaryChanged) fitActivities(visible)
     } else if (previousSelectionKey || previousFocusedId) {
       fitDefault(true)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, allActivities, hasSelection, detailId, panelOpen])
+  }, [visible, allActivities, hasSelection, detailId, panelOpen, tripSummaryOpen])
 
   // Re-fit when App asks for it (new range's first page, or history finished
   // streaming) — not on every appended page.

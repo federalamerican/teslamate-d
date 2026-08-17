@@ -164,6 +164,10 @@ export default function App() {
   // Plain click toggles one row and sets the anchor; shift-click adds the
   // whole anchor→target range to the selection (additive).
   const toggle = (id: string, idx: number, shift: boolean) => {
+    // Checkbox selection is its own map mode. Close any activity/trip panel
+    // first so the checked activities immediately become the map focus.
+    setDetailId(null)
+    setShowTrip(false)
     if (shift && anchorRef.current != null && anchorRef.current < filtered.length) {
       const lo = Math.min(anchorRef.current, idx)
       const hi = Math.max(anchorRef.current, idx)
@@ -175,6 +179,11 @@ export default function App() {
     setSelected((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]))
   }
   const allSelected = filtered.length > 0 && filtered.every((a) => selSet.has(a.id))
+  const toggleSelectAll = () => {
+    setDetailId(null)
+    setShowTrip(false)
+    setSelected(allSelected ? [] : filtered.map((a) => a.id))
+  }
 
   const openDetail = (id: string) => {
     setDetailId(id)
@@ -245,9 +254,7 @@ export default function App() {
             hideHomeDest={hideHomeDest}
             onToggleHide={() => setHideHomeDest((v) => !v)}
             allSelected={allSelected}
-            onToggleSelectAll={() =>
-              setSelected(allSelected ? [] : filtered.map((a) => a.id))
-            }
+            onToggleSelectAll={toggleSelectAll}
             historyLoading={historyLoading}
             error={error}
           />
@@ -276,6 +283,7 @@ export default function App() {
           units={units}
           detailId={detailId}
           panelOpen={panelOpen}
+          tripSummaryOpen={showTrip}
           onOpenDetail={openDetail}
         >
           {detailId != null && (
