@@ -113,10 +113,10 @@ a:hover {
 .maplibregl-ctrl-attrib {
   display: none !important;
 }
-.cluster {
+.charge-marker {
   transition: transform 0.12s ease;
 }
-.cluster:hover {
+.maplibregl-marker:hover > .charge-marker {
   transform: translateY(-2px) scale(1.06);
 }
 button {

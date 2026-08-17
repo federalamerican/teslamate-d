@@ -69,10 +69,17 @@ function chargeMarkerEl(a: Activity, active: boolean): HTMLDivElement {
   const halo = active ? 'rgba(224,34,58,0.5)' : homeDest ? 'rgba(125,155,240,0.18)' : 'rgba(47,191,130,0.18)'
   const size = active ? 30 : 26
   const el = document.createElement('div')
-  el.className = 'cluster'
   el.title = a.title
-  el.style.cssText = `width:${size}px;height:${size}px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;border:${active ? 3 : 2.5}px solid #fff;box-shadow:0 3px 10px rgba(20,80,120,0.4),0 0 0 ${active ? 6 : 5}px ${halo};cursor:pointer`
-  el.innerHTML = '<svg width="12" height="14" viewBox="0 0 12 14"><polygon points="7,0 0,8 5,8 4,14 12,5 6,5" fill="#fff"/></svg>'
+  el.style.cursor = 'pointer'
+
+  // MapLibre continuously updates the marker element's transform while the
+  // map moves. Keep visual transitions on a child so they cannot make the
+  // geographic anchor lag behind the map during a drag.
+  const visual = document.createElement('div')
+  visual.className = 'charge-marker'
+  visual.style.cssText = `width:${size}px;height:${size}px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;border:${active ? 3 : 2.5}px solid #fff;box-shadow:0 3px 10px rgba(20,80,120,0.4),0 0 0 ${active ? 6 : 5}px ${halo}`
+  visual.innerHTML = '<svg width="12" height="14" viewBox="0 0 12 14"><polygon points="7,0 0,8 5,8 4,14 12,5 6,5" fill="#fff"/></svg>'
+  el.appendChild(visual)
   return el
 }
 
