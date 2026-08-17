@@ -31,6 +31,8 @@ type Bounds = [[number, number], [number, number]]
 type Point = [number, number]
 
 const CURRENT_LOCATION_ZOOM = 12
+const ACTIVITY_FIT_PADDING = 85
+const TRIP_SUMMARY_FIT_PADDING = 100
 
 function boundsOf(acts: Activity[]): Bounds | null {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
@@ -145,7 +147,7 @@ export default function MapView(
   const didFitRef = useRef(false)
   const pendingFitRef = useRef(false)
 
-  const fitActivity = (activity: Activity, duration = 700, paddingBase = 60) => {
+  const fitActivity = (activity: Activity, duration = 700, paddingBase = ACTIVITY_FIT_PADDING) => {
     const map = mapRef.current
     if (!map || !loadedRef.current) return
 
@@ -164,7 +166,7 @@ export default function MapView(
   const fitActivities = (acts: Activity[], duration = 700) => {
     // The itinerary panel contains more visual weight than activity detail;
     // a modestly larger margin keeps the route from feeling cramped.
-    const paddingBase = tripSummaryOpen ? 75 : 60
+    const paddingBase = tripSummaryOpen ? TRIP_SUMMARY_FIT_PADDING : ACTIVITY_FIT_PADDING
     if (acts.length === 1) {
       fitActivity(acts[0], duration, paddingBase)
       return
@@ -291,7 +293,7 @@ export default function MapView(
     }
     // Route endpoints also belong in checkbox-selection mode. Selected drives
     // are ordered oldest→newest so a multi-drive trip gets one red start,
-    // one black finish, and white stop dots between its drive legs.
+    // one black finish, and blue stop dots between its drive legs.
     const drives = acts
       .filter((a) => a.kind === 'drive' && a.coords && a.coords.length >= 2)
       .sort((a, b) => a.date.localeCompare(b.date))
@@ -319,7 +321,7 @@ export default function MapView(
         })
         if (!hasSelectedChargeBetween && drive.coords) {
           const c = drive.coords[drive.coords.length - 1]
-          markersRef.current.push(new maplibregl.Marker({ element: endpointEl('#ffffff') }).setLngLat([c[0], c[1]]).addTo(map))
+          markersRef.current.push(new maplibregl.Marker({ element: endpointEl('#4f6bc0') }).setLngLat([c[0], c[1]]).addTo(map))
         }
       }
     }
