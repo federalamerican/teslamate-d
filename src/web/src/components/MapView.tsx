@@ -278,7 +278,8 @@ export default function MapView(
     const map = mapRef.current
     if (!map || !loadedRef.current) return
     const src = map.getSource('route') as maplibregl.GeoJSONSource | undefined
-    src?.setData({ type: 'FeatureCollection', features: routeFeatures(acts) })
+    const features = routeFeatures(acts)
+    src?.setData({ type: 'FeatureCollection', features })
 
     markersRef.current.forEach((m) => m.remove())
     markersRef.current = []
@@ -331,7 +332,7 @@ export default function MapView(
     // Test/debug hook: lets headless checks read what the map shows without
     // racing the WebGL worker.
     ;(window as unknown as Record<string, unknown>).__dash = {
-      routeFeatures: routeFeatures(acts).length,
+      routeFeatures: features.length,
       markers: markersRef.current.length,
       visible: acts.length,
       hasSelection: sel,

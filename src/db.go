@@ -15,6 +15,40 @@ type DB struct {
 	units string
 }
 
+type driveSummary struct {
+	distanceKm float64
+	drives     int
+	distance   []float64
+	driveCount []float64
+}
+
+type chargeSummary struct {
+	energyKWh float64
+	sessions  int
+	energy    []float64
+}
+
+type previousSummary struct {
+	distanceKm float64
+	drives     int
+	energyKWh float64
+}
+
+type driveSummaryResult struct {
+	v   driveSummary
+	err error
+}
+
+type chargeSummaryResult struct {
+	v   chargeSummary
+	err error
+}
+
+type previousSummaryResult struct {
+	v   previousSummary
+	err error
+}
+
 // openDB opens a connection pool and forces every session into read-only mode
 // as defense in depth. You should still point it at a read-only role (see README).
 func openDB(cfg Config) (*DB, error) {
@@ -95,73 +129,48 @@ func (d *DB) Summary(ctx context.Context, r Range) (Summary, error) {
 		}
 	}
 
+	driveCh := make(chan driveSummaryResult, 1)
+	chargeCh := make(chan chargeSummaryResult, 1)
+	go func() {
+		v, err := d.summaryDrives(ctx, from, to, r.CarID)
+		driveCh <- driveSummaryResult{v, err}
+	}()
+	go func() {
+		v, err := d.summaryCharges(ctx, from, to, r.CarID)
+		chargeCh <- chargeSummaryResult{v, err}
+	}()
+
+	// The prior-period comparison is independent too, so it can use the
+	// remaining pool capacity instead of extending the summary critical path.
+	var previousCh chan previousSummaryResult
+	if !r.AllTime {
+		previousCh = make(chan previousSummaryResult, 1)
+		prevFrom, prevTo := from.Add(-to.Sub(from)), from
+		go func() {
+			v, err := d.summaryPrevious(ctx, prevFrom, prevTo, r.CarID)
+			previousCh <- previousSummaryResult{v, err}
+		}()
+	}
+
+	drives := <-driveCh
+	charges := <-chargeCh
+	if drives.err != nil {
+		return Summary{}, drives.err
+	}
+	if charges.err != nil {
+		return Summary{}, charges.err
+	}
+
 	var s Summary
+	s.DistanceKm = drives.v.distanceKm
+	s.Drives = drives.v.drives
+	s.EnergyKWh = charges.v.energyKWh
+	s.Sessions = charges.v.sessions
 	s.Sparklines = Sparklines{
-		Distance:   make([]float64, sparkBuckets),
-		Drives:     make([]float64, sparkBuckets),
-		Energy:     make([]float64, sparkBuckets),
+		Distance:   drives.v.distance,
+		Drives:     drives.v.driveCount,
+		Energy:     charges.v.energy,
 		Efficiency: make([]float64, sparkBuckets),
-	}
-
-	// Drives: bucketed distance and count over the window.
-	const qDrives = `
-SELECT width_bucket(extract(epoch FROM start_date)::float8, $1, $2, $3),
-       COALESCE(sum(distance),0)::float8, count(*)
-FROM drives
-WHERE start_date >= $4 AND start_date < $5 AND ($6::int IS NULL OR car_id = $6)
-GROUP BY 1`
-	rows, err := d.pool.Query(ctx, qDrives,
-		float64(from.Unix()), float64(to.Unix()), sparkBuckets, from, to, r.CarID)
-	if err != nil {
-		return s, err
-	}
-	for rows.Next() {
-		var b, n int
-		var dist float64
-		if err := rows.Scan(&b, &dist, &n); err != nil {
-			rows.Close()
-			return s, err
-		}
-		s.DistanceKm += dist
-		s.Drives += n
-		if i := clampBucket(b); i >= 0 {
-			s.Sparklines.Distance[i] += dist
-			s.Sparklines.Drives[i] += float64(n)
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return s, err
-	}
-
-	// Charging: bucketed energy and session count.
-	const qCharges = `
-SELECT width_bucket(extract(epoch FROM start_date)::float8, $1, $2, $3),
-       COALESCE(sum(charge_energy_added),0)::float8, count(*)
-FROM charging_processes
-WHERE start_date >= $4 AND start_date < $5 AND ($6::int IS NULL OR car_id = $6)
-GROUP BY 1`
-	rows, err = d.pool.Query(ctx, qCharges,
-		float64(from.Unix()), float64(to.Unix()), sparkBuckets, from, to, r.CarID)
-	if err != nil {
-		return s, err
-	}
-	for rows.Next() {
-		var b, n int
-		var kwh float64
-		if err := rows.Scan(&b, &kwh, &n); err != nil {
-			rows.Close()
-			return s, err
-		}
-		s.EnergyKWh += kwh
-		s.Sessions += n
-		if i := clampBucket(b); i >= 0 {
-			s.Sparklines.Energy[i] += kwh
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return s, err
 	}
 
 	s.EfficiencyWhKm = efficiencyWhKm(s.EnergyKWh, s.DistanceKm)
@@ -170,9 +179,80 @@ GROUP BY 1`
 	}
 
 	// Prior period of equal length, for the KPI deltas. Meaningless for all-time.
-	if !r.AllTime {
-		prevFrom, prevTo := from.Add(-to.Sub(from)), from
-		const qPrev = `
+	if previousCh != nil {
+		previous := <-previousCh
+		if previous.err != nil {
+			return s, previous.err
+		}
+		s.Deltas = &Deltas{
+			DistanceKm:     s.DistanceKm - previous.v.distanceKm,
+			Drives:         s.Drives - previous.v.drives,
+			EnergyKWh:      s.EnergyKWh - previous.v.energyKWh,
+			EfficiencyWhKm: s.EfficiencyWhKm - efficiencyWhKm(previous.v.energyKWh, previous.v.distanceKm),
+		}
+	}
+	return s, nil
+}
+
+func (d *DB) summaryDrives(ctx context.Context, from, to time.Time, carID *int) (driveSummary, error) {
+	const q = `
+SELECT width_bucket(extract(epoch FROM start_date)::float8, $1, $2, $3),
+       COALESCE(sum(distance),0)::float8, count(*)
+FROM drives
+WHERE start_date >= $4 AND start_date < $5 AND ($6::int IS NULL OR car_id = $6)
+GROUP BY 1`
+	rows, err := d.pool.Query(ctx, q, float64(from.Unix()), float64(to.Unix()), sparkBuckets, from, to, carID)
+	if err != nil {
+		return driveSummary{}, err
+	}
+	defer rows.Close()
+	out := driveSummary{distance: make([]float64, sparkBuckets), driveCount: make([]float64, sparkBuckets)}
+	for rows.Next() {
+		var bucket, count int
+		var distance float64
+		if err := rows.Scan(&bucket, &distance, &count); err != nil {
+			return driveSummary{}, err
+		}
+		out.distanceKm += distance
+		out.drives += count
+		if i := clampBucket(bucket); i >= 0 {
+			out.distance[i] += distance
+			out.driveCount[i] += float64(count)
+		}
+	}
+	return out, rows.Err()
+}
+
+func (d *DB) summaryCharges(ctx context.Context, from, to time.Time, carID *int) (chargeSummary, error) {
+	const q = `
+SELECT width_bucket(extract(epoch FROM start_date)::float8, $1, $2, $3),
+       COALESCE(sum(charge_energy_added),0)::float8, count(*)
+FROM charging_processes
+WHERE start_date >= $4 AND start_date < $5 AND ($6::int IS NULL OR car_id = $6)
+GROUP BY 1`
+	rows, err := d.pool.Query(ctx, q, float64(from.Unix()), float64(to.Unix()), sparkBuckets, from, to, carID)
+	if err != nil {
+		return chargeSummary{}, err
+	}
+	defer rows.Close()
+	out := chargeSummary{energy: make([]float64, sparkBuckets)}
+	for rows.Next() {
+		var bucket, count int
+		var energy float64
+		if err := rows.Scan(&bucket, &energy, &count); err != nil {
+			return chargeSummary{}, err
+		}
+		out.energyKWh += energy
+		out.sessions += count
+		if i := clampBucket(bucket); i >= 0 {
+			out.energy[i] += energy
+		}
+	}
+	return out, rows.Err()
+}
+
+func (d *DB) summaryPrevious(ctx context.Context, from, to time.Time, carID *int) (previousSummary, error) {
+	const q = `
 SELECT
  (SELECT COALESCE(sum(distance),0)::float8 FROM drives
    WHERE start_date >= $1 AND start_date < $2 AND ($3::int IS NULL OR car_id = $3)),
@@ -180,19 +260,9 @@ SELECT
    WHERE start_date >= $1 AND start_date < $2 AND ($3::int IS NULL OR car_id = $3)),
  (SELECT COALESCE(sum(charge_energy_added),0)::float8 FROM charging_processes
    WHERE start_date >= $1 AND start_date < $2 AND ($3::int IS NULL OR car_id = $3))`
-		var pDist, pKwh float64
-		var pDrives int
-		if err := d.pool.QueryRow(ctx, qPrev, prevFrom, prevTo, r.CarID).Scan(&pDist, &pDrives, &pKwh); err != nil {
-			return s, err
-		}
-		s.Deltas = &Deltas{
-			DistanceKm:     s.DistanceKm - pDist,
-			Drives:         s.Drives - pDrives,
-			EnergyKWh:      s.EnergyKWh - pKwh,
-			EfficiencyWhKm: s.EfficiencyWhKm - efficiencyWhKm(pKwh, pDist),
-		}
-	}
-	return s, nil
+	var out previousSummary
+	err := d.pool.QueryRow(ctx, q, from, to, carID).Scan(&out.distanceKm, &out.drives, &out.energyKWh)
+	return out, err
 }
 
 func clampBucket(b int) int {

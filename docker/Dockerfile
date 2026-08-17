@@ -1,8 +1,10 @@
+# syntax=docker/dockerfile:1.7
+
 # frontend (built once on the native builder arch; output is arch-independent)
 FROM --platform=$BUILDPLATFORM node:22-alpine AS webbuild
 WORKDIR /web
 COPY src/web/package.json src/web/package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY src/web/ .
 RUN npm run build
 
@@ -11,9 +13,13 @@ FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS build
 ARG TARGETOS TARGETARCH
 WORKDIR /build
 RUN apk add --no-cache git
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
 COPY --from=webbuild /web/dist ./src/web/dist
-RUN go mod tidy && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w" -o /out/teslamate-dash ./src
 
 # run (distroless, non-root, static)

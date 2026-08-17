@@ -10,6 +10,7 @@ import DetailPanel from './components/DetailPanel'
 import TripSummary from './components/TripSummary'
 
 const FEED_LIMIT = 200
+const HISTORY_PUBLISH_INTERVAL_MS = 200
 
 export type TypeFilter = 'all' | 'drive' | 'charge'
 
@@ -90,6 +91,8 @@ export default function App() {
   useEffect(() => {
     if (!config) return
     let stale = false
+    let accumulated: Activity[] | null = null
+    let publishedLength = 0
     setError(null)
     setHistoryLoading(true)
     ;(async () => {
@@ -108,21 +111,38 @@ export default function App() {
           if (config.featured_sel?.length) setSelected(config.featured_sel)
         }
 
-        let all = first
+        // Keep the first page responsive, then coalesce older pages into a
+        // handful of UI/map updates instead of rebuilding the complete history
+        // after every request.
+        const seen = new Set(first.map((a) => a.id))
+        const all = [...first]
+        accumulated = all
         let page = first
+        publishedLength = first.length
+        let lastPublishedAt = Date.now()
         while (page.length === FEED_LIMIT) {
           const more = await api.activities(carId, win, page[page.length - 1].date)
           if (stale) return
-          const seen = new Set(all.map((a) => a.id))
           const fresh = more.filter((a) => !seen.has(a.id))
           if (!fresh.length) break
-          all = [...all, ...fresh]
-          setActivities(all)
+          fresh.forEach((a) => seen.add(a.id))
+          all.push(...fresh)
+          if (Date.now() - lastPublishedAt >= HISTORY_PUBLISH_INTERVAL_MS) {
+            setActivities([...all])
+            publishedLength = all.length
+            lastPublishedAt = Date.now()
+          }
           page = more
         }
+        if (all.length !== publishedLength) setActivities([...all])
         if (all.length > first.length) setFitVersion((v) => v + 1)
       } catch (e) {
-        if (!stale) setError(String(e))
+        if (!stale) {
+          if (accumulated && accumulated.length !== publishedLength) {
+            setActivities([...accumulated])
+          }
+          setError(String(e))
+        }
       } finally {
         if (!stale) setHistoryLoading(false)
       }

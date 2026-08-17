@@ -88,6 +88,7 @@ export default function ActivityFeed(p: Props) {
               className={sel || active ? undefined : 'row-hover'}
               style={{
                 display: 'flex', gap: 11, alignItems: 'center', padding: '10px 11px', borderRadius: 12, cursor: 'pointer', transition: 'background .12s',
+                contentVisibility: 'auto', containIntrinsicSize: '58px',
                 ...(active
                   ? { background: 'var(--row-active)', boxShadow: 'inset 0 0 0 1px var(--row-active-border)' }
                   : sel
