@@ -31,8 +31,8 @@ type Bounds = [[number, number], [number, number]]
 type Point = [number, number]
 
 const CURRENT_LOCATION_ZOOM = 12
-const ACTIVITY_FIT_PADDING = 85
-const TRIP_SUMMARY_FIT_PADDING = 100
+const ACTIVITY_FIT_PADDING = 73
+const TRIP_SUMMARY_FIT_PADDING = 88
 
 function boundsOf(acts: Activity[]): Bounds | null {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
@@ -135,10 +135,11 @@ export default function MapView(
   const onOpenDetailRef = useRef(onOpenDetail)
   onOpenDetailRef.current = onOpenDetail
 
-  // Panels overlay the left ~380px of the map; pad fits so routes stay visible.
-  const fitPadding = (base: number) => ({
+  // Detail and Trip Summary panels overlay the left ~380px of the map. Plain
+  // checkbox selections deliberately opt out so they remain map-centered.
+  const fitPadding = (base: number, compensateForPanel = panelOpenRef.current) => ({
     top: base, bottom: base, right: base,
-    left: panelOpenRef.current ? 410 : base,
+    left: compensateForPanel ? 410 : base,
   })
 
   // Default view centers the latest recorded car position. Explicit shared or
@@ -147,20 +148,25 @@ export default function MapView(
   const didFitRef = useRef(false)
   const pendingFitRef = useRef(false)
 
-  const fitActivity = (activity: Activity, duration = 700, paddingBase = ACTIVITY_FIT_PADDING) => {
+  const fitActivity = (
+    activity: Activity,
+    duration = 700,
+    paddingBase = ACTIVITY_FIT_PADDING,
+    compensateForPanel = panelOpenRef.current,
+  ) => {
     const map = mapRef.current
     if (!map || !loadedRef.current) return
 
     if (activity.kind === 'charge' && activity.pt) {
       didFitRef.current = true
-      map.easeTo({ center: [activity.pt[0], activity.pt[1]], zoom: 15, duration, padding: fitPadding(paddingBase) })
+      map.easeTo({ center: [activity.pt[0], activity.pt[1]], zoom: 15, duration, padding: fitPadding(paddingBase, compensateForPanel) })
       return
     }
 
     const b = boundsOf([activity])
     if (!b) return
     didFitRef.current = true
-    map.fitBounds(b, { padding: fitPadding(paddingBase), duration, maxZoom: 15 })
+    map.fitBounds(b, { padding: fitPadding(paddingBase, compensateForPanel), duration, maxZoom: 15 })
   }
 
   const fitActivities = (acts: Activity[], duration = 700) => {
@@ -168,14 +174,14 @@ export default function MapView(
     // a modestly larger margin keeps the route from feeling cramped.
     const paddingBase = tripSummaryOpen ? TRIP_SUMMARY_FIT_PADDING : ACTIVITY_FIT_PADDING
     if (acts.length === 1) {
-      fitActivity(acts[0], duration, paddingBase)
+      fitActivity(acts[0], duration, paddingBase, tripSummaryOpen)
       return
     }
     const map = mapRef.current
     const b = boundsOf(acts)
     if (!map || !loadedRef.current || !b) return
     didFitRef.current = true
-    map.fitBounds(b, { padding: fitPadding(paddingBase), duration, maxZoom: 15 })
+    map.fitBounds(b, { padding: fitPadding(paddingBase, tripSummaryOpen), duration, maxZoom: 15 })
   }
 
   const fitDefault = (force = false) => {
