@@ -186,7 +186,7 @@ export default function App() {
   }
 
   const openDetail = (id: string) => {
-    setDetailId(id)
+    setDetailId((current) => (current === id ? null : id))
     setShowTrip(false)
   }
   const stepDetail = (dir: number) => {

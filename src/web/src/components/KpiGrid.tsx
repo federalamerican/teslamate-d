@@ -38,6 +38,7 @@ function Delta({ value, invert }: { value: number | undefined; invert?: boolean 
 export default function KpiGrid({ summary, units, label }: Props) {
   const s = summary
   const effFactor = units === 'mi' ? 1.60934 : 1
+  const showEnergyMWh = (s?.energy_kwh ?? 0) >= 1000
   const cards = [
     {
       name: 'Distance',
@@ -59,8 +60,8 @@ export default function KpiGrid({ summary, units, label }: Props) {
     },
     {
       name: 'Energy',
-      value: s ? fmtInt(s.energy_kwh) : '—',
-      unit: 'kWh',
+      value: s ? (showEnergyMWh ? (s.energy_kwh / 1000).toFixed(1) : fmtInt(s.energy_kwh)) : '—',
+      unit: showEnergyMWh ? 'MWh' : 'kWh',
       delta: s?.deltas?.energy_kwh,
       invert: false,
       spark: s?.sparklines.energy ?? [],

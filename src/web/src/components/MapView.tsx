@@ -157,12 +157,9 @@ export default function MapView(
     const map = mapRef.current
     if (!map || !loadedRef.current) return
 
-    if (activity.kind === 'charge' && activity.pt) {
-      didFitRef.current = true
-      map.easeTo({ center: [activity.pt[0], activity.pt[1]], zoom: 15, duration, padding: fitPadding(paddingBase, compensateForPanel) })
-      return
-    }
-
+    // Use the same bounds camera for drives and single-point charges. Passing
+    // padding to easeTo for charges made it persistent, so later route fits
+    // counted both the old and new padding and occasionally zoomed too far out.
     const b = boundsOf([activity])
     if (!b) return
     didFitRef.current = true
