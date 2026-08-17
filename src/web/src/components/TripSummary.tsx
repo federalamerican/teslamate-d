@@ -7,11 +7,10 @@ type Props = {
   acts: Activity[]
   units: 'km' | 'mi'
   onClose: () => void
-  onFitRoute: () => void
   selectedIds: string[]
 }
 
-export default function TripSummary({ acts, units, onClose, onFitRoute, selectedIds }: Props) {
+export default function TripSummary({ acts, units, onClose, selectedIds }: Props) {
   const [copied, setCopied] = useState(false)
 
   const drives = acts.filter((a) => a.kind === 'drive')
@@ -230,14 +229,7 @@ export default function TripSummary({ acts, units, onClose, onFitRoute, selected
         </div>
       </div>
 
-      <div style={{ flex: '0 0 auto', borderTop: '1px solid var(--border)', padding: '12px 16px', display: 'flex', gap: 8 }}>
-        <button
-          onClick={onFitRoute}
-          className="hover-bright"
-          style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--text)', background: 'var(--chip-active)', border: '1px solid var(--border-strong)', borderRadius: 10, padding: 10, cursor: 'pointer' }}
-        >
-          Fit route
-        </button>
+      <div style={{ flex: '0 0 auto', borderTop: '1px solid var(--border)', padding: '12px 16px', display: 'flex' }}>
         <button
           onClick={share}
           style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, fontSize: 12, fontWeight: 600, color: '#fff', background: '#e0223a', border: 'none', borderRadius: 10, padding: 10, cursor: 'pointer' }}

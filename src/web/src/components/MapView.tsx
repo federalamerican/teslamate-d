@@ -1,11 +1,7 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import maplibregl from 'maplibre-gl'
 import type { Activity } from '../api'
 import { kmToUnit } from '../format'
-
-export type MapHandle = {
-  focusVisible: () => void
-}
 
 type Props = {
   styleUrl: string
@@ -111,15 +107,16 @@ function endpointEl(color: string): HTMLDivElement {
   return el
 }
 
-const MapView = forwardRef<MapHandle, Props>(function MapView(
-  { styleUrl, allActivities, fitVersion, visible, loading, hasSelection, showBadge, selSummary, units, detailId, panelOpen, onOpenDetail, children },
-  ref,
+export default function MapView(
+  { styleUrl, allActivities, fitVersion, visible, loading, hasSelection, showBadge, selSummary, units, detailId, panelOpen, onOpenDetail, children }: Props,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const loadedRef = useRef(false)
   const markersRef = useRef<maplibregl.Marker[]>([])
   const focusedActivityRef = useRef<string | null>(null)
+  const selectionKeyRef = useRef<string | null>(null)
+  const panelOpenStateRef = useRef(panelOpen)
   const visibleRef = useRef(visible)
   visibleRef.current = visible
   const allRef = useRef(allActivities)
@@ -144,6 +141,35 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
   // control below remains available for the complete driving history.
   const didFitRef = useRef(false)
   const pendingFitRef = useRef(false)
+
+  const fitActivity = (activity: Activity, duration = 700) => {
+    const map = mapRef.current
+    if (!map || !loadedRef.current) return
+
+    if (activity.kind === 'charge' && activity.pt) {
+      didFitRef.current = true
+      map.easeTo({ center: [activity.pt[0], activity.pt[1]], zoom: 15, duration })
+      return
+    }
+
+    const b = boundsOf([activity])
+    if (!b) return
+    didFitRef.current = true
+    map.fitBounds(b, { padding: fitPadding(60), duration, maxZoom: 15 })
+  }
+
+  const fitActivities = (acts: Activity[], duration = 700) => {
+    if (acts.length === 1) {
+      fitActivity(acts[0], duration)
+      return
+    }
+    const map = mapRef.current
+    const b = boundsOf(acts)
+    if (!map || !loadedRef.current || !b) return
+    didFitRef.current = true
+    map.fitBounds(b, { padding: fitPadding(60), duration, maxZoom: 15 })
+  }
+
   const fitDefault = (force = false) => {
     const map = mapRef.current
     if (!map || !loadedRef.current) {
@@ -155,13 +181,7 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
     const first = !didFitRef.current
 
     if (hasSelectionRef.current) {
-      const b = boundsOf(visibleRef.current)
-      if (!b) {
-        pendingFitRef.current = true
-        return
-      }
-      didFitRef.current = true
-      map.fitBounds(b, { padding: fitPadding(60), duration: first ? 0 : 700, maxZoom: 12 })
+      fitActivities(visibleRef.current, first ? 0 : 700)
       return
     }
 
@@ -172,22 +192,6 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
     }
     didFitRef.current = true
     map.easeTo({ center: current, zoom: CURRENT_LOCATION_ZOOM, duration: first ? 0 : 700 })
-  }
-
-  const fitActivity = (activity: Activity) => {
-    const map = mapRef.current
-    if (!map || !loadedRef.current) return
-
-    if (activity.kind === 'charge' && activity.pt) {
-      didFitRef.current = true
-      map.easeTo({ center: [activity.pt[0], activity.pt[1]], zoom: 15, duration: 700 })
-      return
-    }
-
-    const b = boundsOf([activity])
-    if (!b) return
-    didFitRef.current = true
-    map.fitBounds(b, { padding: fitPadding(60), duration: 700, maxZoom: 15 })
   }
 
   const fitOverview = () => {
@@ -311,12 +315,23 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
     render(focusedActivity ? [focusedActivity] : visible, hasSelection, detailId)
 
     const focusedId = focusedActivity?.id ?? null
-    const previousId = focusedActivityRef.current
+    const previousFocusedId = focusedActivityRef.current
+    const selectionKey = hasSelection ? visible.map((a) => a.id).join('|') : null
+    const previousSelectionKey = selectionKeyRef.current
+    const panelChanged = panelOpenStateRef.current !== panelOpen
     focusedActivityRef.current = focusedId
-    if (focusedActivity && focusedId !== previousId) fitActivity(focusedActivity)
-    else if (!focusedActivity && previousId) fitDefault(true)
+    selectionKeyRef.current = selectionKey
+    panelOpenStateRef.current = panelOpen
+
+    if (focusedActivity) {
+      if (focusedId !== previousFocusedId || panelChanged) fitActivity(focusedActivity)
+    } else if (hasSelection) {
+      if (selectionKey !== previousSelectionKey || previousFocusedId || panelChanged) fitActivities(visible)
+    } else if (previousSelectionKey || previousFocusedId) {
+      fitDefault(true)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, allActivities, hasSelection, detailId])
+  }, [visible, allActivities, hasSelection, detailId, panelOpen])
 
   // Re-fit when App asks for it (new range's first page, or history finished
   // streaming) — not on every appended page.
@@ -324,13 +339,6 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
     if (!focusedActivityRef.current) fitDefault()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitVersion])
-
-  useImperativeHandle(ref, () => ({
-    focusVisible() {
-      const b = boundsOf(visibleRef.current)
-      if (b && mapRef.current) mapRef.current.fitBounds(b, { padding: fitPadding(90), duration: 700, maxZoom: 9 })
-    },
-  }))
 
   const glass: React.CSSProperties = {
     background: 'var(--glass)',
@@ -425,6 +433,4 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(
       </div>
     </div>
   )
-})
-
-export default MapView
+}

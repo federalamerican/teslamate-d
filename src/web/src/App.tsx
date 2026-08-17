@@ -5,7 +5,7 @@ import Header from './components/Header'
 import KpiGrid from './components/KpiGrid'
 import ActivityFeed from './components/ActivityFeed'
 import SelectionBar from './components/SelectionBar'
-import MapView, { type MapHandle } from './components/MapView'
+import MapView from './components/MapView'
 import DetailPanel from './components/DetailPanel'
 import TripSummary from './components/TripSummary'
 
@@ -61,8 +61,6 @@ export default function App() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [fitVersion, setFitVersion] = useState(0)
   const [error, setError] = useState<string | null>(null)
-
-  const mapRef = useRef<MapHandle>(null)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -259,7 +257,6 @@ export default function App() {
             km={selKm}
             units={units}
             onClear={() => setSelected([])}
-            onFocus={() => mapRef.current?.focusVisible()}
             onTrip={() => {
               setShowTrip(true)
               setDetailId(null)
@@ -268,7 +265,6 @@ export default function App() {
         </aside>
 
         <MapView
-          ref={mapRef}
           styleUrl={config.map_style_url}
           allActivities={activities}
           fitVersion={fitVersion}
@@ -297,7 +293,6 @@ export default function App() {
               acts={tripActs}
               units={units}
               onClose={() => setShowTrip(false)}
-              onFitRoute={() => mapRef.current?.focusVisible()}
               selectedIds={selected}
             />
           )}

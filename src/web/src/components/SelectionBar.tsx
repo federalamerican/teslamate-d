@@ -6,11 +6,10 @@ type Props = {
   km: number
   units: 'km' | 'mi'
   onClear: () => void
-  onFocus: () => void
   onTrip: () => void
 }
 
-export default function SelectionBar({ hasSel, summary, km, units, onClear, onFocus, onTrip }: Props) {
+export default function SelectionBar({ hasSel, summary, km, units, onClear, onTrip }: Props) {
   return (
     <div style={{ flex: '0 0 auto', borderTop: '1px solid var(--border)', padding: '11px 16px' }}>
       {hasSel ? (
@@ -29,14 +28,7 @@ export default function SelectionBar({ hasSel, summary, km, units, onClear, onFo
               Clear
             </button>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              onClick={onFocus}
-              className="hover-bright"
-              style={{ flex: 1, fontSize: 11.5, fontWeight: 600, color: 'var(--text)', background: 'var(--chip-active)', border: '1px solid var(--border-strong)', borderRadius: 9, padding: 9, cursor: 'pointer' }}
-            >
-              Focus map
-            </button>
+          <div style={{ display: 'flex' }}>
             <button
               onClick={onTrip}
               style={{ flex: 1, fontSize: 11.5, fontWeight: 600, color: '#fff', background: '#e0223a', border: 'none', borderRadius: 9, padding: 9, cursor: 'pointer', boxShadow: '0 2px 10px rgba(224,34,58,0.35)' }}
