@@ -3,6 +3,7 @@ import maplibregl from 'maplibre-gl'
 import type { Activity, ActivityDetail } from '../api'
 import { kmToUnit } from '../format'
 import { detailRouteSourceOptions, focusedMapActivity, usesDetailedRoute } from '../detailState'
+import { detailRouteFeatures, overviewRouteFeatures } from '../routeFeatures'
 
 type Props = {
   styleUrl: string
@@ -66,24 +67,6 @@ function currentLocationOf(acts: Activity[]): Point | null {
   return null
 }
 
-// Route segments carry their activity id so a map click can open the panel.
-function routeFeatures(acts: Activity[]): GeoJSON.Feature[] {
-  const out: GeoJSON.Feature[] = []
-  for (const a of acts) {
-    if (a.kind !== 'drive' || !a.coords || a.coords.length < 2) continue
-    for (let i = 0; i < a.coords.length - 1; i++) {
-      const p = a.coords[i]
-      const q = a.coords[i + 1]
-      out.push({
-        type: 'Feature',
-        properties: { speed: Math.max(p[2] ?? 0, q[2] ?? 0), aid: a.id },
-        geometry: { type: 'LineString', coordinates: [[p[0], p[1]], [q[0], q[1]]] },
-      })
-    }
-  }
-  return out
-}
-
 function chargeMarkerEl(a: Activity, active: boolean): HTMLDivElement {
   const homeDest = a.category === 'home' || a.category === 'destination'
   const color = homeDest ? '#7d9bf0' : '#2fbf82'
@@ -117,6 +100,12 @@ export default function MapView(
   const mapRef = useRef<maplibregl.Map | null>(null)
   const loadedRef = useRef(false)
   const markersRef = useRef<maplibregl.Marker[]>([])
+  const routeActivitiesRef = useRef<Activity[] | null>(null)
+  const routeDetailedRef = useRef<boolean | null>(null)
+  const routeFeatureCountRef = useRef(0)
+  const markerActivitiesRef = useRef<Activity[] | null>(null)
+  const markerActiveIDRef = useRef<string | null>(null)
+  const markerSelectionRef = useRef<boolean | null>(null)
   const focusedActivityRef = useRef<string | null>(null)
   const selectionKeyRef = useRef<string | null>(null)
   const panelOpenStateRef = useRef(panelOpen)
@@ -315,65 +304,75 @@ export default function MapView(
   function render(acts: Activity[], sel: boolean, activeId: string | null, detailed = false) {
     const map = mapRef.current
     if (!map || !loadedRef.current) return
-    const features = routeFeatures(acts)
-    const overviewSource = map.getSource('route') as maplibregl.GeoJSONSource | undefined
-    const detailSource = map.getSource('detail-route') as maplibregl.GeoJSONSource | undefined
-    const routeData: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features }
-    overviewSource?.setData(detailed ? emptyRouteData : routeData)
-    detailSource?.setData(detailed ? routeData : emptyRouteData)
-
-    markersRef.current.forEach((m) => m.remove())
-    markersRef.current = []
-    for (const a of acts) {
-      if (a.kind === 'charge' && a.pt) {
-        const el = chargeMarkerEl(a, a.id === activeId)
-        el.addEventListener('click', (ev) => {
-          ev.stopPropagation()
-          onOpenDetailRef.current(a.id)
-        })
-        markersRef.current.push(
-          new maplibregl.Marker({ element: el }).setLngLat([a.pt[0], a.pt[1]]).addTo(map),
-        )
-      }
-    }
-    // Route endpoints also belong in checkbox-selection mode. Selected drives
-    // are ordered oldest→newest so a multi-drive trip gets one red start,
-    // one black finish, and blue stop dots between its drive legs.
-    const drives = acts
-      .filter((a) => a.kind === 'drive' && a.coords && a.coords.length >= 2)
-      .sort((a, b) => a.date.localeCompare(b.date))
-    const firstDrive = drives[0]
-    const lastDrive = drives[drives.length - 1]
-    if (firstDrive?.coords) {
-      const c = firstDrive.coords[0]
-      markersRef.current.push(new maplibregl.Marker({ element: endpointEl('#e0223a') }).setLngLat([c[0], c[1]]).addTo(map))
-    }
-    if (lastDrive?.coords) {
-      const c = lastDrive.coords[lastDrive.coords.length - 1]
-      markersRef.current.push(new maplibregl.Marker({ element: endpointEl('#111318') }).setLngLat([c[0], c[1]]).addTo(map))
+    if (routeActivitiesRef.current !== acts || routeDetailedRef.current !== detailed) {
+      const features = detailed ? detailRouteFeatures(acts) : overviewRouteFeatures(acts)
+      const overviewSource = map.getSource('route') as maplibregl.GeoJSONSource | undefined
+      const detailSource = map.getSource('detail-route') as maplibregl.GeoJSONSource | undefined
+      const routeData: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features }
+      overviewSource?.setData(detailed ? emptyRouteData : routeData)
+      detailSource?.setData(detailed ? routeData : emptyRouteData)
+      routeActivitiesRef.current = acts
+      routeDetailedRef.current = detailed
+      routeFeatureCountRef.current = features.length
     }
 
-    if (sel && drives.length > 1) {
-      const selectedCharges = acts.filter((a) => a.kind === 'charge' && a.pt)
-      for (let i = 0; i < drives.length - 1; i++) {
-        const drive = drives[i]
-        const nextDrive = drives[i + 1]
-        const fromTime = Date.parse(drive.date)
-        const toTime = Date.parse(nextDrive.date)
-        const hasSelectedChargeBetween = selectedCharges.some((charge) => {
-          const chargeTime = Date.parse(charge.date)
-          return chargeTime > fromTime && chargeTime < toTime
-        })
-        if (!hasSelectedChargeBetween && drive.coords) {
-          const c = drive.coords[drive.coords.length - 1]
-          markersRef.current.push(new maplibregl.Marker({ element: endpointEl('#4f6bc0') }).setLngLat([c[0], c[1]]).addTo(map))
+    if (markerActivitiesRef.current !== acts || markerActiveIDRef.current !== activeId || markerSelectionRef.current !== sel) {
+      markersRef.current.forEach((m) => m.remove())
+      markersRef.current = []
+      for (const a of acts) {
+        if (a.kind === 'charge' && a.pt) {
+          const el = chargeMarkerEl(a, a.id === activeId)
+          el.addEventListener('click', (ev) => {
+            ev.stopPropagation()
+            onOpenDetailRef.current(a.id)
+          })
+          markersRef.current.push(
+            new maplibregl.Marker({ element: el }).setLngLat([a.pt[0], a.pt[1]]).addTo(map),
+          )
         }
       }
+      // Route endpoints also belong in checkbox-selection mode. Selected drives
+      // are ordered oldest→newest so a multi-drive trip gets one red start,
+      // one black finish, and blue stop dots between its drive legs.
+      const drives = acts
+        .filter((a) => a.kind === 'drive' && a.coords && a.coords.length >= 2)
+        .sort((a, b) => a.date.localeCompare(b.date))
+      const firstDrive = drives[0]
+      const lastDrive = drives[drives.length - 1]
+      if (firstDrive?.coords) {
+        const c = firstDrive.coords[0]
+        markersRef.current.push(new maplibregl.Marker({ element: endpointEl('#e0223a') }).setLngLat([c[0], c[1]]).addTo(map))
+      }
+      if (lastDrive?.coords) {
+        const c = lastDrive.coords[lastDrive.coords.length - 1]
+        markersRef.current.push(new maplibregl.Marker({ element: endpointEl('#111318') }).setLngLat([c[0], c[1]]).addTo(map))
+      }
+
+      if (sel && drives.length > 1) {
+        const selectedCharges = acts.filter((a) => a.kind === 'charge' && a.pt)
+        for (let i = 0; i < drives.length - 1; i++) {
+          const drive = drives[i]
+          const nextDrive = drives[i + 1]
+          const fromTime = Date.parse(drive.date)
+          const toTime = Date.parse(nextDrive.date)
+          const hasSelectedChargeBetween = selectedCharges.some((charge) => {
+            const chargeTime = Date.parse(charge.date)
+            return chargeTime > fromTime && chargeTime < toTime
+          })
+          if (!hasSelectedChargeBetween && drive.coords) {
+            const c = drive.coords[drive.coords.length - 1]
+            markersRef.current.push(new maplibregl.Marker({ element: endpointEl('#4f6bc0') }).setLngLat([c[0], c[1]]).addTo(map))
+          }
+        }
+      }
+      markerActivitiesRef.current = acts
+      markerActiveIDRef.current = activeId
+      markerSelectionRef.current = sel
     }
     // Test/debug hook: lets headless checks read what the map shows without
     // racing the WebGL worker.
     ;(window as unknown as Record<string, unknown>).__dash = {
-      routeFeatures: features.length,
+      routeFeatures: routeFeatureCountRef.current,
       markers: markersRef.current.length,
       visible: acts.length,
       hasSelection: sel,

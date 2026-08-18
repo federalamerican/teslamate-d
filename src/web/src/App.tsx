@@ -9,9 +9,11 @@ import MapView from './components/MapView'
 import DetailPanel from './components/DetailPanel'
 import TripSummary from './components/TripSummary'
 import { DetailCache, isCurrentDetailResponse } from './detailState'
+import { OverviewCache } from './overviewState'
 
-const FEED_LIMIT = 200
-const HISTORY_PUBLISH_INTERVAL_MS = 200
+const FIRST_PAGE_LIMIT = 200
+const HISTORY_PAGE_LIMIT = 500
+const HISTORY_PUBLISH_ACTIVITY_INTERVAL = 1000
 const DETAIL_CACHE_TTL_MS = 3 * 60 * 1000
 const DETAIL_CACHE_MAX_ENTRIES = 8
 
@@ -63,6 +65,7 @@ export default function App() {
   // showcase trip) is preselected once on the first feed load.
   const featuredDoneRef = useRef(false)
   const detailCacheRef = useRef(new DetailCache(DETAIL_CACHE_MAX_ENTRIES, DETAIL_CACHE_TTL_MS))
+  const overviewCacheRef = useRef(new OverviewCache())
   const currentDetailIdRef = useRef<string | null>(null)
   currentDetailIdRef.current = detailId
 
@@ -93,21 +96,62 @@ export default function App() {
     [range, applied],
   )
 
-  // Fetch the summary plus the FULL feed for the range: the first page renders
-  // immediately, then older pages stream in until the range is exhausted, so
-  // All / 1Y really show everything. Each page is cursor-keyed (before=) and
-  // served from the backend's short TTL cache on repeat visits.
+  // Fetch the summary plus the FULL feed for the range. A completed wider
+  // session cache can satisfy nested ranges immediately; stale caches refresh
+  // their newest page in the background without hiding the map.
   useEffect(() => {
     if (!config) return
+    const cachedActivities = overviewCacheRef.current.activities(carId, win)
+    const cachedSummary = overviewCacheRef.current.getSummary(carId, win)
     let stale = false
+    const controller = new AbortController()
     let accumulated: Activity[] | null = null
     let publishedLength = 0
     setError(null)
+
+    if (cachedActivities) {
+      setActivities(cachedActivities)
+      setFitVersion((v) => v + 1)
+      if (cachedSummary) setSummary(cachedSummary)
+      if (overviewCacheRef.current.isFresh(carId, win) && cachedSummary) {
+        setHistoryLoading(false)
+        return () => controller.abort()
+      }
+      setHistoryLoading(false)
+      ;(async () => {
+        try {
+          const [s, recent] = await Promise.all([
+            api.summary(carId, win, controller.signal),
+            api.activities(carId, win, undefined, FIRST_PAGE_LIMIT, controller.signal),
+          ])
+          if (stale) return
+          overviewCacheRef.current.putSummary(carId, win, s)
+          setSummary(s)
+          const refreshed = overviewCacheRef.current.mergeRecent(carId, win, recent)
+          if (refreshed) {
+            setActivities(refreshed)
+            setFitVersion((v) => v + 1)
+          }
+        } catch {
+          // A stale-while-revalidate failure leaves the already complete cache
+          // visible; the next range change or page reload will retry it.
+        }
+      })()
+      return () => {
+        stale = true
+        controller.abort()
+      }
+    }
+
     setHistoryLoading(true)
     ;(async () => {
       try {
-        const [s, first] = await Promise.all([api.summary(carId, win), api.activities(carId, win)])
+        const [s, first] = await Promise.all([
+          api.summary(carId, win, controller.signal),
+          api.activities(carId, win, undefined, FIRST_PAGE_LIMIT, controller.signal),
+        ])
         if (stale) return
+        overviewCacheRef.current.putSummary(carId, win, s)
         setSummary(s)
         setActivities(first)
         setFitVersion((v) => v + 1)
@@ -120,33 +164,33 @@ export default function App() {
           if (config.featured_sel?.length) setSelected(config.featured_sel)
         }
 
-        // Keep the first page responsive, then coalesce older pages into a
-        // handful of UI/map updates instead of rebuilding the complete history
-        // after every request.
+        // Keep the first page responsive, then publish larger batches so the
+        // map does not rebuild its whole overview after every network page.
         const seen = new Set(first.map((a) => a.id))
         const all = [...first]
         accumulated = all
         let page = first
         publishedLength = first.length
-        let lastPublishedAt = Date.now()
-        while (page.length === FEED_LIMIT) {
-          const more = await api.activities(carId, win, page[page.length - 1].date)
+        let pageLimit = FIRST_PAGE_LIMIT
+        while (page.length === pageLimit) {
+          pageLimit = HISTORY_PAGE_LIMIT
+          const more = await api.activities(carId, win, page[page.length - 1].date, pageLimit, controller.signal)
           if (stale) return
           const fresh = more.filter((a) => !seen.has(a.id))
           if (!fresh.length) break
           fresh.forEach((a) => seen.add(a.id))
           all.push(...fresh)
-          if (Date.now() - lastPublishedAt >= HISTORY_PUBLISH_INTERVAL_MS) {
+          if (all.length - publishedLength >= HISTORY_PUBLISH_ACTIVITY_INTERVAL) {
             setActivities([...all])
             publishedLength = all.length
-            lastPublishedAt = Date.now()
           }
           page = more
         }
         if (all.length !== publishedLength) setActivities([...all])
         if (all.length > first.length) setFitVersion((v) => v + 1)
+        overviewCacheRef.current.putCoverage(carId, win, all)
       } catch (e) {
-        if (!stale) {
+        if (!stale && !controller.signal.aborted) {
           if (accumulated && accumulated.length !== publishedLength) {
             setActivities([...accumulated])
           }
@@ -158,6 +202,7 @@ export default function App() {
     })()
     return () => {
       stale = true
+      controller.abort()
     }
   }, [config, carId, win])
 
@@ -282,6 +327,7 @@ export default function App() {
     setSelected([])
     setDetailId(null)
     setShowTrip(false)
+    overviewCacheRef.current.clear()
     anchorRef.current = null
   }
 

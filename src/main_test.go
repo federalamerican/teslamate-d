@@ -173,6 +173,29 @@ func BenchmarkDetailPayload(b *testing.B) {
 	}
 }
 
+func BenchmarkOverviewTracePreparation(b *testing.B) {
+	for _, drives := range []int{200, 500} {
+		b.Run(strconv.Itoa(drives), func(b *testing.B) {
+			raw := make([][][]float64, drives)
+			for d := range raw {
+				raw[d] = make([][]float64, 300)
+				for i := range raw[d] {
+					raw[d][i] = []float64{float64(i) / 10_000, float64(d)/100_000 + float64(i%11)/100_000, float64(i % 130)}
+				}
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				activities := make([]Activity, drives)
+				for d, points := range raw {
+					activities[d] = Activity{ID: "d" + strconv.Itoa(d), Kind: "drive", Coords: simplify(points, maxTracePoints)}
+				}
+				_, _ = json.Marshal(activities)
+			}
+		})
+	}
+}
+
 func TestGzipResponses(t *testing.T) {
 	h := gzipResponses(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

@@ -87,8 +87,8 @@ function query(carId: number | null, win: Window, extra: Record<string, string> 
 export const api = {
   config: () => get<AppConfig>('/api/config'),
   cars: () => get<Car[]>('/api/cars'),
-  summary: (carId: number | null, win: Window) => get<Summary>(`/api/summary${query(carId, win)}`),
-  activities: (carId: number | null, win: Window, before?: string) =>
-    get<Activity[]>(`/api/activities${query(carId, win, before ? { before } : {})}`),
+  summary: (carId: number | null, win: Window, signal?: AbortSignal) => get<Summary>(`/api/summary${query(carId, win)}`, signal),
+  activities: (carId: number | null, win: Window, before?: string, limit?: number, signal?: AbortSignal) =>
+    get<Activity[]>(`/api/activities${query(carId, win, { ...(before ? { before } : {}), ...(limit ? { limit: String(limit) } : {}) })}`, signal),
   detail: (id: string, signal?: AbortSignal) => get<ActivityDetail>(`/api/activities/${encodeURIComponent(id)}`, signal),
 }
