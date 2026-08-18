@@ -267,7 +267,7 @@ func (s *demoStore) Detail(ctx context.Context, id string) (*Detail, error) {
 			for i, c := range d.coords {
 				t := d.start.Add(time.Duration(float64(d.durMin) * float64(i) / float64(max(n-1, 1)) * float64(time.Minute)))
 				soc := float64(d.s0) + (float64(d.s1)-float64(d.s0))*float64(i)/float64(max(n-1, 1))
-				det.Series = append(det.Series, SeriesPoint{T: t, Speed: c[2], Soc: math.Round(soc)})
+				det.Series = append(det.Series, SeriesPoint{T: t, Speed: float64p(c[2]), Soc: float64p(math.Round(soc))})
 			}
 			return det, nil
 		}

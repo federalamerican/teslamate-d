@@ -109,9 +109,11 @@ type Detail struct {
 
 type SeriesPoint struct {
 	T     time.Time `json:"t"`
-	Speed float64   `json:"speed"`
-	Soc   float64   `json:"soc"`
+	Speed *float64  `json:"speed"`
+	Soc   *float64  `json:"soc"`
 }
+
+func float64p(v float64) *float64 { return &v }
 
 type CurvePoint struct {
 	Soc float64 `json:"soc"`

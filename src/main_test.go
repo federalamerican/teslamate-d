@@ -35,28 +35,45 @@ func (s *detailErrorStore) Detail(context.Context, string) (*Detail, error) {
 	return nil, errors.New("detail unavailable")
 }
 
-func TestDetailSeries(t *testing.T) {
+func TestDetailSeriesPreservesNativeMeasurements(t *testing.T) {
 	start := time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
-	for _, count := range []int{0, 1, 2, 96} {
-		t.Run(strconv.Itoa(count), func(t *testing.T) {
-			points := make([]driveDetailPoint, count)
-			for i := range points {
-				points[i] = driveDetailPoint{T: start.Add(time.Duration(i) * time.Second), Speed: float64(i), Soc: float64(100 - i)}
-			}
-			series := detailSeries(points)
-			if count == 0 {
-				if series != nil {
-					t.Fatalf("empty series = %#v, want nil", series)
-				}
-				return
-			}
-			if series[0].T != points[0].T || series[len(series)-1].T != points[len(points)-1].T {
-				t.Fatal("series must retain the first and final samples")
-			}
-			if count == 96 && len(series) != 49 {
-				t.Fatalf("series length = %d, want 49", len(series))
-			}
-		})
+	points := []driveDetailPoint{
+		{T: start, Speed: float64p(50), Soc: float64p(80)},
+		{T: start.Add(time.Second), Speed: float64p(51)},
+		{T: start.Add(2 * time.Second), Soc: float64p(79)},
+		{T: start.Add(3 * time.Second)},
+	}
+	series := detailSeries(points)
+	if len(series) != 3 {
+		t.Fatalf("series length = %d, want 3 genuine telemetry rows", len(series))
+	}
+	if series[0].T != points[0].T || series[2].T != points[2].T {
+		t.Fatal("series must retain chronological native measurements")
+	}
+	if series[1].Soc != nil || series[2].Speed != nil {
+		t.Fatal("missing telemetry must remain null")
+	}
+	if series := detailSeries([]driveDetailPoint{{T: start}}); series != nil {
+		t.Fatalf("rows without telemetry = %#v, want nil", series)
+	}
+}
+
+func TestDetailRouteBoundsCoordinatesWithoutReducingTelemetry(t *testing.T) {
+	points := make([]driveDetailPoint, maxDetailTracePoints+2)
+	for i := range points {
+		v := float64(i)
+		points[i] = driveDetailPoint{Lng: float64p(v), Lat: float64p(v), Speed: float64p(v), Soc: float64p(80)}
+	}
+	points[1].Lng = nil
+	route := detailRoute(points)
+	if len(route) != maxDetailTracePoints {
+		t.Fatalf("route length = %d, want %d", len(route), maxDetailTracePoints)
+	}
+	if *route[0].Lng != 0 || *route[len(route)-1].Lng != float64(len(points)-1) {
+		t.Fatal("route must retain coordinate endpoints")
+	}
+	if got := len(detailSeries(points)); got != len(points) {
+		t.Fatalf("telemetry length = %d, want %d", got, len(points))
 	}
 }
 
@@ -154,18 +171,20 @@ func TestResponseCacheHonorsConfiguredBound(t *testing.T) {
 }
 
 func BenchmarkDetailPayload(b *testing.B) {
-	for _, count := range []int{600, 2700, 7200, 10_000, 20_000} {
+	for _, count := range []int{600, 2700, 7200, 10_000, 20_000, 50_000} {
 		b.Run(strconv.Itoa(count), func(b *testing.B) {
 			points := make([]driveDetailPoint, count)
 			for i := range points {
-				points[i] = driveDetailPoint{Lng: float64(i) / 100_000, Lat: float64(i) / 200_000, Speed: float64(i % 130), Soc: float64(100 - i%100)}
+				lng, lat := float64(i)/100_000, float64(i)/200_000
+				points[i] = driveDetailPoint{T: time.Unix(int64(i), 0).UTC(), Lng: float64p(lng), Lat: float64p(lat), Speed: float64p(float64(i % 130)), Soc: float64p(float64(100 - i%100))}
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				coords := make([][]float64, 0, len(points))
-				for _, p := range points {
-					coords = append(coords, []float64{p.Lng, p.Lat, p.Speed})
+				route := detailRoute(points)
+				coords := make([][]float64, 0, len(route))
+				for _, p := range route {
+					coords = append(coords, []float64{*p.Lng, *p.Lat, *p.Speed})
 				}
 				_, _ = json.Marshal(Detail{Activity: Activity{Coords: coords}, Series: detailSeries(points)})
 			}

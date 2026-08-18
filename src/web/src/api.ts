@@ -55,7 +55,7 @@ export type Activity = {
   peakKw?: number
 }
 
-export type SeriesPoint = { t: string; speed: number; soc: number }
+export type SeriesPoint = { t: string; speed: number | null; soc: number | null }
 export type CurvePoint = { soc: number; kw: number }
 
 export type ActivityDetail = Activity & {

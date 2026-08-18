@@ -1,5 +1,7 @@
+import { useMemo, useState } from 'react'
 import type { ActivityDetail, CurvePoint, SeriesPoint } from '../api'
 import { feedDate, fmtHShort, fmtInt, kmToUnit } from '../format'
+import { chartGeometry, elapsedLabel, nearestTelemetryIndex, prepareTelemetryChart } from '../telemetryChart'
 
 type Props = {
   detail: ActivityDetail | null
@@ -31,19 +33,6 @@ function chargePaths(curve: CurvePoint[]) {
   return { line, area, scale, markX: x(pk.soc).toFixed(1), markY: y(pk.kw).toFixed(1) }
 }
 
-function drivePaths(series: SeriesPoint[]) {
-  const n = series.length
-  const maxV = Math.max(...series.map((p) => p.speed), 1)
-  const scale = maxV * 1.12
-  const x = (i: number) => PL + (i / (n - 1 || 1)) * IW
-  const y = (v: number) => PT + (1 - v / scale) * IH
-  const ySoc = (s: number) => PT + (1 - s / 100) * IH
-  const line = series.map((p, i) => `${x(i).toFixed(1)},${y(p.speed).toFixed(1)}`).join(' ')
-  const area = `${PL},${PT + IH} ${line} ${PL + IW},${PT + IH}`
-  const socLine = series.map((p, i) => `${x(i).toFixed(1)},${ySoc(p.soc).toFixed(1)}`).join(' ')
-  return { line, area, scale, socLine }
-}
-
 // Value of the chart's primary axis at a gridline y (inverse of the y scale).
 const gridValue = (gy: number, scale: number) => Math.round(scale * (1 - (gy - PT) / IH))
 // The dashed SoC overlay is plotted on a fixed 0-100% scale.
@@ -52,6 +41,96 @@ const gridSoc = (gy: number) => Math.round(100 * (1 - (gy - PT) / IH))
 const navBtn: React.CSSProperties = {
   width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center',
   background: 'var(--chip)', border: '1px solid var(--border-chip)', borderRadius: 9, cursor: 'pointer', color: 'var(--legend)',
+}
+
+function DriveTelemetryChart({ series, units }: { series: SeriesPoint[]; units: 'km' | 'mi' }) {
+  const [showSpeed, setShowSpeed] = useState(true)
+  const [showBattery, setShowBattery] = useState(true)
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null)
+  const chart = useMemo(() => prepareTelemetryChart(series, showSpeed, showBattery), [series, showSpeed, showBattery])
+  const point = chart && hoverIndex != null ? chart.points[hoverIndex] : null
+  const speedUnit = units === 'mi' ? 'mph' : 'km/h'
+  const speed = (value: number) => Math.round(kmToUnit(value, units))
+
+  if (!chart) return null
+
+  const move = (event: React.PointerEvent<SVGRectElement>) => {
+    if (!chart.eligibleIndices.length) return
+    const rect = event.currentTarget.ownerSVGElement?.getBoundingClientRect()
+    if (!rect) return
+    const rawX = chartGeometry.left + ((event.clientX - rect.left) / rect.width) * (chartGeometry.width - chartGeometry.left - chartGeometry.right)
+    const x = Math.max(chartGeometry.left, Math.min(chartGeometry.width - chartGeometry.right, rawX))
+    const target = chart.start + ((x - chartGeometry.left) / (chartGeometry.width - chartGeometry.left - chartGeometry.right)) * (chart.end - chart.start)
+    setHoverIndex(nearestTelemetryIndex(chart.points, chart.eligibleIndices, target))
+  }
+
+  const toggleStyle = (active: boolean): React.CSSProperties => ({
+    display: 'flex', alignItems: 'center', gap: 6, padding: 0, border: 0, background: 'transparent',
+    cursor: 'pointer', color: active ? 'var(--muted-2)' : 'var(--faint)', opacity: active ? 1 : 0.5,
+  })
+
+  return (
+    <>
+      <div style={{ position: 'relative' }}>
+        <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="140" preserveAspectRatio="none" style={{ display: 'block', touchAction: 'none' }}>
+          {GRID_YS.map((gy) => (
+            <line key={gy} x1={PL} y1={gy} x2={PL + IW} y2={gy} stroke="var(--chart-grid)" strokeWidth="1" />
+          ))}
+          {chart.speedSegments.map((segment, index) => (
+            <polyline key={`speed-${index}`} points={segment} fill="none" stroke="#5f7fd6" strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" />
+          ))}
+          {chart.batterySegments.map((segment, index) => (
+            <polyline key={`battery-${index}`} points={segment} fill="none" stroke="#e6a94f" strokeWidth="1.7" strokeDasharray="4 3" strokeLinejoin="round" />
+          ))}
+          {point && (
+            <>
+              <line x1={chart.x(point.time)} y1={PT} x2={chart.x(point.time)} y2={PT + IH} stroke="var(--legend)" strokeOpacity="0.65" strokeWidth="1" />
+              {showSpeed && point.speed != null && <circle cx={chart.x(point.time)} cy={chart.speedY(point.speed)} r="2.8" fill="#fff" stroke="#5f7fd6" strokeWidth="1.5" />}
+              {showBattery && point.soc != null && <circle cx={chart.x(point.time)} cy={chart.batteryY(point.soc)} r="2.8" fill="#fff" stroke="#e6a94f" strokeWidth="1.5" />}
+            </>
+          )}
+          <rect x={PL} y={PT} width={IW} height={IH} fill="transparent" onPointerMove={move} onPointerLeave={() => setHoverIndex(null)} />
+        </svg>
+        {showSpeed && GRID_YS.map((gy, i) => (
+          <span key={gy} style={{ position: 'absolute', left: 4, top: (gy / H) * 140, transform: 'translateY(-100%)', fontSize: 8.5, fontFamily: "'JetBrains Mono',monospace", color: 'var(--faint)', pointerEvents: 'none' }}>
+            {speed(gridValue(gy, chart.speedScale))}{i === 0 ? ` ${speedUnit}` : ''}
+          </span>
+        ))}
+        {showBattery && GRID_YS.map((gy, i) => (
+          <span key={`soc${gy}`} style={{ position: 'absolute', right: 4, top: (gy / H) * 140, transform: 'translateY(-100%)', fontSize: 8.5, fontFamily: "'JetBrains Mono',monospace", color: '#e6a94f', opacity: 0.85, pointerEvents: 'none' }}>
+            {gridSoc(gy)}{i === 0 ? '%' : ''}
+          </span>
+        ))}
+        {point && (
+          <div style={{ position: 'absolute', top: 8, left: `${Math.max(8, Math.min(70, (chart.x(point.time) / W) * 100))}%`, transform: 'translateX(-50%)', minWidth: 126, padding: '6px 7px', borderRadius: 6, background: 'rgba(16,18,24,0.94)', border: '1px solid var(--border-chip)', fontSize: 9, lineHeight: 1.45, fontFamily: "'JetBrains Mono',monospace", color: 'var(--legend)', pointerEvents: 'none' }}>
+            <div>{elapsedLabel(point.time - chart.start)} · {new Date(point.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}</div>
+            {showSpeed && <div>Speed: {point.speed == null ? '—' : `${speed(point.speed)} ${speedUnit}`}</div>}
+            {showBattery && <div>Battery: {point.soc == null ? '—' : `${Math.round(point.soc)}%`}</div>}
+          </div>
+        )}
+        {!showSpeed && !showBattery && (
+          <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', fontSize: 10, color: 'var(--faint)', fontFamily: "'JetBrains Mono',monospace", pointerEvents: 'none' }}>
+            Turn on Speed or Battery
+          </div>
+        )}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontFamily: "'JetBrains Mono',monospace", fontSize: 9.5, color: 'var(--faint)' }}>
+        <span>Start</span>
+        <span>{elapsedLabel(chart.end - chart.start)}</span>
+        <span>End</span>
+      </div>
+      <div style={{ display: 'flex', gap: 14, marginTop: 9 }}>
+        <button type="button" aria-pressed={showSpeed} onClick={() => setShowSpeed((visible) => !visible)} style={toggleStyle(showSpeed)}>
+          <span style={{ width: 14, height: 3, borderRadius: 2, background: '#5f7fd6' }} />
+          <span style={{ fontSize: 10.5 }}>Speed</span>
+        </button>
+        <button type="button" aria-pressed={showBattery} onClick={() => setShowBattery((visible) => !visible)} style={toggleStyle(showBattery)}>
+          <span style={{ width: 14, height: 0, borderTop: '2px dashed #e6a94f' }} />
+          <span style={{ fontSize: 10.5 }}>Battery %</span>
+        </button>
+      </div>
+    </>
+  )
 }
 
 function StatCard({ label, value, unit }: { label: string; value: string | number; unit: string }) {
@@ -90,7 +169,7 @@ export default function DetailPanel({ detail, loading, error, units, onClose, on
   const socHi = d ? Math.max(d.socStart, d.socEnd) : 0
 
   const curve = isCharge && d?.curve && d.curve.length >= 2 ? chargePaths(d.curve) : null
-  const series = !isCharge && d?.series && d.series.length >= 2 ? drivePaths(d.series) : null
+  const driveSeries = !isCharge && d?.series && d.series.length ? d.series : null
 
   const socPer100 =
     d && !isCharge && d.km ? (((d.socStart - d.socEnd) / kmToUnit(d.km, units)) * 100).toFixed(1) : null
@@ -172,7 +251,7 @@ export default function DetailPanel({ detail, loading, error, units, onClose, on
                   {isCharge ? 'power vs. state of charge' : socPer100 != null ? `${socPer100}% SoC / 100 ${units}` : ''}
                 </div>
               </div>
-              {curve || series ? (
+              {curve ? (
                 <>
                   <div style={{ position: 'relative' }}>
                     <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="140" preserveAspectRatio="none" style={{ display: 'block' }}>
@@ -181,28 +260,17 @@ export default function DetailPanel({ detail, loading, error, units, onClose, on
                           <stop offset="0" stopColor="#3ecf8e" stopOpacity="0.34" />
                           <stop offset="1" stopColor="#3ecf8e" stopOpacity="0.02" />
                         </linearGradient>
-                        <linearGradient id="fillSpeed" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0" stopColor="#5f7fd6" stopOpacity="0.34" />
-                          <stop offset="1" stopColor="#5f7fd6" stopOpacity="0.02" />
-                        </linearGradient>
                       </defs>
                       {GRID_YS.map((gy) => (
                         <line key={gy} x1="6" y1={gy} x2="298" y2={gy} stroke="var(--chart-grid)" strokeWidth="1" />
                       ))}
-                      <polygon points={(curve ?? series)!.area} fill={curve ? 'url(#fillCharge)' : 'url(#fillSpeed)'} />
-                      <polyline points={(curve ?? series)!.line} fill="none" stroke={curve ? '#3ecf8e' : '#5f7fd6'} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" />
-                      {series && (
-                        <polyline points={series.socLine} fill="none" stroke="#e6a94f" strokeWidth="1.7" strokeDasharray="4 3" strokeLinejoin="round" />
-                      )}
-                      {curve && <circle cx={curve.markX} cy={curve.markY} r="3.6" fill="#fff" stroke="#3ecf8e" strokeWidth="2" />}
+                      <polygon points={curve.area} fill="url(#fillCharge)" />
+                      <polyline points={curve.line} fill="none" stroke="#3ecf8e" strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" />
+                      <circle cx={curve.markX} cy={curve.markY} r="3.6" fill="#fff" stroke="#3ecf8e" strokeWidth="2" />
                     </svg>
-                    {/* Y-axis values at the gridlines. The svg stretches, so labels
-                        live in HTML: primary axis (kW / speed) on the left, the
-                        dashed SoC scale on the right for drives. */}
                     {GRID_YS.map((gy, i) => {
-                      const scale = (curve ?? series)!.scale
-                      const v = curve ? gridValue(gy, scale) : Math.round(kmToUnit(gridValue(gy, scale), units))
-                      const unit = i === 0 ? (curve ? ' kW' : ` ${units === 'mi' ? 'mph' : 'km/h'}`) : ''
+                      const v = gridValue(gy, curve.scale)
+                      const unit = i === 0 ? ' kW' : ''
                       return (
                         <span
                           key={gy}
@@ -212,33 +280,14 @@ export default function DetailPanel({ detail, loading, error, units, onClose, on
                         </span>
                       )
                     })}
-                    {series &&
-                      GRID_YS.map((gy, i) => (
-                        <span
-                          key={`soc${gy}`}
-                          style={{ position: 'absolute', right: 4, top: (gy / H) * 140, transform: 'translateY(-100%)', fontSize: 8.5, fontFamily: "'JetBrains Mono',monospace", color: '#e6a94f', opacity: 0.85, pointerEvents: 'none' }}
-                        >
-                          {gridSoc(gy)}{i === 0 ? '%' : ''}
-                        </span>
-                      ))}
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontFamily: "'JetBrains Mono',monospace", fontSize: 9.5, color: 'var(--faint)' }}>
-                    <span>{isCharge ? `${d.socStart}%` : 'Start'}</span>
-                    <span>{isCharge ? `${d.socEnd}%` : 'End'}</span>
+                    <span>{d.socStart}%</span>
+                    <span>{d.socEnd}%</span>
                   </div>
-                  {series && (
-                    <div style={{ display: 'flex', gap: 14, marginTop: 9 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ width: 14, height: 3, borderRadius: 2, background: '#5f7fd6' }} />
-                        <span style={{ fontSize: 10.5, color: 'var(--muted-2)' }}>Speed</span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ width: 14, height: 0, borderTop: '2px dashed #e6a94f' }} />
-                        <span style={{ fontSize: 10.5, color: 'var(--muted-2)' }}>Battery %</span>
-                      </div>
-                    </div>
-                  )}
                 </>
+              ) : driveSeries ? (
+                <DriveTelemetryChart key={d.id} series={driveSeries} units={units} />
               ) : (
                 <div style={{ fontSize: 11, color: 'var(--faint)', fontFamily: "'JetBrains Mono',monospace", padding: '20px 0' }}>
                   No samples recorded for this {isCharge ? 'charge' : 'drive'}.
