@@ -111,6 +111,8 @@ type SeriesPoint struct {
 	T     time.Time `json:"t"`
 	Speed *float64  `json:"speed"`
 	Soc   *float64  `json:"soc"`
+	Lng   *float64  `json:"lng"`
+	Lat   *float64  `json:"lat"`
 }
 
 func float64p(v float64) *float64 { return &v }

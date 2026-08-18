@@ -5,6 +5,9 @@ const innerWidth = chartGeometry.width - chartGeometry.left - chartGeometry.righ
 const innerHeight = chartGeometry.height - chartGeometry.top - chartGeometry.bottom
 
 export type TelemetryPoint = SeriesPoint & { time: number }
+export type TelemetryPosition = { lng: number; lat: number; timestamp: number }
+
+export type TooltipPlacement = { left: number; top: number }
 
 export type TelemetryChartData = {
   points: TelemetryPoint[]
@@ -81,6 +84,31 @@ export function nearestTelemetryIndex(points: TelemetryPoint[], eligibleIndices:
   const before = eligibleIndices[lo - 1]
   const after = eligibleIndices[lo]
   return target - points[before].time <= points[after].time - target ? before : after
+}
+
+export function telemetryPosition(point: TelemetryPoint): TelemetryPosition | null {
+  if (point.lng == null || point.lat == null || !Number.isFinite(point.lng) || !Number.isFinite(point.lat)) return null
+  return { lng: point.lng, lat: point.lat, timestamp: point.time }
+}
+
+export function tooltipPlacement(
+  cursorX: number,
+  cursorY: number,
+  containerWidth: number,
+  containerHeight: number,
+  tooltipWidth: number,
+  tooltipHeight: number,
+): TooltipPlacement {
+  const gap = 10
+  const margin = 6
+  let left = cursorX + gap
+  let top = cursorY - tooltipHeight - gap
+  if (left + tooltipWidth > containerWidth - margin) left = cursorX - tooltipWidth - gap
+  if (top < margin) top = cursorY + gap
+  return {
+    left: Math.max(margin, Math.min(containerWidth - tooltipWidth - margin, left)),
+    top: Math.max(margin, Math.min(containerHeight - tooltipHeight - margin, top)),
+  }
 }
 
 export function elapsedLabel(ms: number): string {

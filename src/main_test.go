@@ -38,8 +38,8 @@ func (s *detailErrorStore) Detail(context.Context, string) (*Detail, error) {
 func TestDetailSeriesPreservesNativeMeasurements(t *testing.T) {
 	start := time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
 	points := []driveDetailPoint{
-		{T: start, Speed: float64p(50), Soc: float64p(80)},
-		{T: start.Add(time.Second), Speed: float64p(51)},
+		{T: start, Lng: float64p(-82.4), Lat: float64p(28.1), Speed: float64p(50), Soc: float64p(80)},
+		{T: start.Add(time.Second), Lng: float64p(-82.3), Lat: float64p(28.2), Speed: float64p(51)},
 		{T: start.Add(2 * time.Second), Soc: float64p(79)},
 		{T: start.Add(3 * time.Second)},
 	}
@@ -52,6 +52,12 @@ func TestDetailSeriesPreservesNativeMeasurements(t *testing.T) {
 	}
 	if series[1].Soc != nil || series[2].Speed != nil {
 		t.Fatal("missing telemetry must remain null")
+	}
+	if series[0].Lng == nil || series[0].Lat == nil || *series[0].Lng != -82.4 || *series[0].Lat != 28.1 {
+		t.Fatal("telemetry must retain the position from its source row")
+	}
+	if series[2].Lng != nil || series[2].Lat != nil {
+		t.Fatal("missing coordinates must remain null")
 	}
 	if series := detailSeries([]driveDetailPoint{{T: start}}); series != nil {
 		t.Fatalf("rows without telemetry = %#v, want nil", series)
@@ -95,6 +101,12 @@ func TestDemoDetailUsesFullTrace(t *testing.T) {
 	}
 	if len(detail.Coords) <= maxTracePoints {
 		t.Fatalf("detail coordinate count = %d, want more than overview cap %d", len(detail.Coords), maxTracePoints)
+	}
+	if len(detail.Series) == 0 || detail.Series[0].Lng == nil || detail.Series[0].Lat == nil {
+		t.Fatal("demo telemetry must include its matching coordinates")
+	}
+	if *detail.Series[0].Lng != drive.coords[0][0] || *detail.Series[0].Lat != drive.coords[0][1] {
+		t.Fatal("demo telemetry coordinates do not match the detailed route")
 	}
 }
 

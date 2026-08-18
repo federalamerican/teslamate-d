@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, type Activity, type ActivityDetail, type AppConfig, type Car, type Summary, type Window } from './api'
 import { daysAgo, isoDay, rangeLabel, type RangeKey } from './format'
 import Header from './components/Header'
 import KpiGrid from './components/KpiGrid'
 import ActivityFeed from './components/ActivityFeed'
 import SelectionBar from './components/SelectionBar'
-import MapView from './components/MapView'
+import MapView, { type MapViewHandle } from './components/MapView'
 import DetailPanel from './components/DetailPanel'
 import TripSummary from './components/TripSummary'
 import { DetailCache, isCurrentDetailResponse } from './detailState'
 import { OverviewCache } from './overviewState'
+import type { TelemetryPosition } from './telemetryChart'
 
 const FIRST_PAGE_LIMIT = 200
 const HISTORY_PAGE_LIMIT = 500
@@ -66,8 +67,13 @@ export default function App() {
   const featuredDoneRef = useRef(false)
   const detailCacheRef = useRef(new DetailCache(DETAIL_CACHE_MAX_ENTRIES, DETAIL_CACHE_TTL_MS))
   const overviewCacheRef = useRef(new OverviewCache())
+  const mapViewRef = useRef<MapViewHandle>(null)
   const currentDetailIdRef = useRef<string | null>(null)
   currentDetailIdRef.current = detailId
+
+  const onTelemetryHover = useCallback((position: TelemetryPosition | null) => {
+    mapViewRef.current?.setTelemetryPosition(position)
+  }, [])
 
   const [summary, setSummary] = useState<Summary | null>(null)
   const [activities, setActivities] = useState<Activity[]>([])
@@ -392,6 +398,7 @@ export default function App() {
         </aside>
 
         <MapView
+          ref={mapViewRef}
           styleUrl={config.map_style_url}
           allActivities={activities}
           fitVersion={fitVersion}
@@ -417,6 +424,7 @@ export default function App() {
               onClose={() => setDetailId(null)}
               onPrev={() => stepDetail(-1)}
               onNext={() => stepDetail(1)}
+              onTelemetryHover={onTelemetryHover}
             />
           )}
           {showTrip && (

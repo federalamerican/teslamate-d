@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, type ReactNode } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, type ReactNode } from 'react'
 import maplibregl from 'maplibre-gl'
 import type { Activity, ActivityDetail } from '../api'
 import { kmToUnit } from '../format'
 import { detailRouteSourceOptions, focusedMapActivity, usesDetailedRoute } from '../detailState'
 import { detailRouteFeatures, overviewRouteFeatures } from '../routeFeatures'
+import type { TelemetryPosition } from '../telemetryChart'
 
 type Props = {
   styleUrl: string
@@ -33,6 +34,10 @@ type Props = {
 
 type Bounds = [[number, number], [number, number]]
 type Point = [number, number]
+
+export type MapViewHandle = {
+  setTelemetryPosition: (position: TelemetryPosition | null) => void
+}
 
 const CURRENT_LOCATION_ZOOM = 12
 const ACTIVITY_FIT_PADDING = 73
@@ -93,13 +98,22 @@ function endpointEl(color: string): HTMLDivElement {
   return el
 }
 
-export default function MapView(
-  { styleUrl, allActivities, fitVersion, visible, loading, hasSelection, showBadge, selSummary, units, detailId, activeDetail, panelOpen, tripSummaryOpen, onOpenDetail, children }: Props,
+function telemetryMarkerEl(): HTMLDivElement {
+  const el = document.createElement('div')
+  el.style.cssText = 'width:13px;height:13px;border-radius:50%;background:#7d9bf0;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.42),0 0 0 3px rgba(125,155,240,0.22);pointer-events:none'
+  return el
+}
+
+const MapView = forwardRef<MapViewHandle, Props>(function MapView(
+  { styleUrl, allActivities, fitVersion, visible, loading, hasSelection, showBadge, selSummary, units, detailId, activeDetail, panelOpen, tripSummaryOpen, onOpenDetail, children },
+  ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const loadedRef = useRef(false)
   const markersRef = useRef<maplibregl.Marker[]>([])
+  const telemetryMarkerRef = useRef<maplibregl.Marker | null>(null)
+  const pendingTelemetryPositionRef = useRef<TelemetryPosition | null>(null)
   const routeActivitiesRef = useRef<Activity[] | null>(null)
   const routeDetailedRef = useRef<boolean | null>(null)
   const routeFeatureCountRef = useRef(0)
@@ -133,6 +147,23 @@ export default function MapView(
     [focusedActivity],
   )
   const renderedActivities = focusedActivities ?? visible
+
+  const setTelemetryPosition = (position: TelemetryPosition | null) => {
+    pendingTelemetryPositionRef.current = position
+    if (!position) {
+      telemetryMarkerRef.current?.remove()
+      telemetryMarkerRef.current = null
+      return
+    }
+    const map = mapRef.current
+    if (!map || !loadedRef.current) return
+    if (!telemetryMarkerRef.current) {
+      telemetryMarkerRef.current = new maplibregl.Marker({ element: telemetryMarkerEl() }).addTo(map)
+    }
+    telemetryMarkerRef.current.setLngLat([position.lng, position.lat])
+  }
+
+  useImperativeHandle(ref, () => ({ setTelemetryPosition }), [])
 
   // Detail and Trip Summary panels overlay the left ~380px of the map. Plain
   // checkbox selections deliberately opt out so they remain map-centered.
@@ -282,6 +313,7 @@ export default function MapView(
       // Test/debug hook (see __dash below).
       ;(window as unknown as Record<string, unknown>).__dashMap = map
       loadedRef.current = true
+      setTelemetryPosition(pendingTelemetryPositionRef.current)
       const focusedActivity = focusedMapActivity(allRef.current, detailIdRef.current, activeDetailRef.current)
       render(
         focusedActivity ? [focusedActivity] : visibleRef.current,
@@ -294,6 +326,8 @@ export default function MapView(
     })
     return () => {
       ro.disconnect()
+      telemetryMarkerRef.current?.remove()
+      telemetryMarkerRef.current = null
       map.remove()
       mapRef.current = null
       loadedRef.current = false
@@ -406,6 +440,10 @@ export default function MapView(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renderedActivities, focusedActivity, useDetailRoute, hasSelection, detailId, panelOpen, tripSummaryOpen])
 
+  useEffect(() => {
+    setTelemetryPosition(null)
+  }, [detailId])
+
   // Re-fit when App asks for it (new range's first page, or history finished
   // streaming) — not on every appended page.
   useEffect(() => {
@@ -506,4 +544,6 @@ export default function MapView(
       </div>
     </div>
   )
-}
+})
+
+export default MapView

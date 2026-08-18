@@ -588,7 +588,7 @@ func detailSeries(pts []driveDetailPoint) []SeriesPoint {
 	out := make([]SeriesPoint, 0, len(pts))
 	for _, p := range pts {
 		if p.Speed != nil || p.Soc != nil {
-			out = append(out, SeriesPoint{T: p.T, Speed: p.Speed, Soc: p.Soc})
+			out = append(out, SeriesPoint{T: p.T, Speed: p.Speed, Soc: p.Soc, Lng: p.Lng, Lat: p.Lat})
 		}
 	}
 	if len(out) == 0 {

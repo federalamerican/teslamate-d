@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ActivityDetail, CurvePoint, SeriesPoint } from '../api'
 import { feedDate, fmtHShort, fmtInt, kmToUnit } from '../format'
-import { chartGeometry, elapsedLabel, nearestTelemetryIndex, prepareTelemetryChart } from '../telemetryChart'
+import { chartGeometry, elapsedLabel, nearestTelemetryIndex, prepareTelemetryChart, telemetryPosition, tooltipPlacement, type TelemetryPosition } from '../telemetryChart'
 
 type Props = {
   detail: ActivityDetail | null
@@ -11,6 +11,7 @@ type Props = {
   onClose: () => void
   onPrev: () => void
   onNext: () => void
+  onTelemetryHover: (position: TelemetryPosition | null) => void
 }
 
 // Chart geometry mirrors the reference mock (viewBox 304×128).
@@ -43,25 +44,72 @@ const navBtn: React.CSSProperties = {
   background: 'var(--chip)', border: '1px solid var(--border-chip)', borderRadius: 9, cursor: 'pointer', color: 'var(--legend)',
 }
 
-function DriveTelemetryChart({ series, units }: { series: SeriesPoint[]; units: 'km' | 'mi' }) {
+function DriveTelemetryChart({ series, units, onTelemetryHover }: { series: SeriesPoint[]; units: 'km' | 'mi'; onTelemetryHover: (position: TelemetryPosition | null) => void }) {
   const [showSpeed, setShowSpeed] = useState(true)
   const [showBattery, setShowBattery] = useState(true)
   const [hoverIndex, setHoverIndex] = useState<number | null>(null)
+  const chartRef = useRef<HTMLDivElement>(null)
+  const tooltipRef = useRef<HTMLDivElement>(null)
+  const hoverIndexRef = useRef<number | null>(null)
+  const pointerRef = useRef<{ x: number; y: number; target: number } | null>(null)
+  const frameRef = useRef<number | null>(null)
   const chart = useMemo(() => prepareTelemetryChart(series, showSpeed, showBattery), [series, showSpeed, showBattery])
   const point = chart && hoverIndex != null ? chart.points[hoverIndex] : null
   const speedUnit = units === 'mi' ? 'mph' : 'km/h'
   const speed = (value: number) => Math.round(kmToUnit(value, units))
 
+  const positionTooltip = () => {
+    const pointer = pointerRef.current
+    const container = chartRef.current
+    const tooltip = tooltipRef.current
+    if (!pointer || !container || !tooltip) return
+    const pos = tooltipPlacement(pointer.x, pointer.y, container.clientWidth, container.clientHeight, tooltip.offsetWidth, tooltip.offsetHeight)
+    tooltip.style.transform = `translate3d(${pos.left}px, ${pos.top}px, 0)`
+  }
+
+  const clearHover = () => {
+    if (frameRef.current != null) cancelAnimationFrame(frameRef.current)
+    frameRef.current = null
+    pointerRef.current = null
+    if (hoverIndexRef.current != null) {
+      hoverIndexRef.current = null
+      setHoverIndex(null)
+    }
+    onTelemetryHover(null)
+  }
+
+  useEffect(() => () => {
+    if (frameRef.current != null) cancelAnimationFrame(frameRef.current)
+    frameRef.current = null
+    pointerRef.current = null
+    hoverIndexRef.current = null
+    onTelemetryHover(null)
+  }, [onTelemetryHover])
+  useEffect(() => { positionTooltip() }, [hoverIndex])
+
   if (!chart) return null
 
   const move = (event: React.PointerEvent<SVGRectElement>) => {
     if (!chart.eligibleIndices.length) return
-    const rect = event.currentTarget.ownerSVGElement?.getBoundingClientRect()
-    if (!rect) return
-    const rawX = chartGeometry.left + ((event.clientX - rect.left) / rect.width) * (chartGeometry.width - chartGeometry.left - chartGeometry.right)
+    const svgRect = event.currentTarget.ownerSVGElement?.getBoundingClientRect()
+    const containerRect = chartRef.current?.getBoundingClientRect()
+    if (!svgRect || !containerRect) return
+    const rawX = chartGeometry.left + ((event.clientX - svgRect.left) / svgRect.width) * (chartGeometry.width - chartGeometry.left - chartGeometry.right)
     const x = Math.max(chartGeometry.left, Math.min(chartGeometry.width - chartGeometry.right, rawX))
     const target = chart.start + ((x - chartGeometry.left) / (chartGeometry.width - chartGeometry.left - chartGeometry.right)) * (chart.end - chart.start)
-    setHoverIndex(nearestTelemetryIndex(chart.points, chart.eligibleIndices, target))
+    pointerRef.current = { x: event.clientX - containerRect.left, y: event.clientY - containerRect.top, target }
+    if (frameRef.current != null) return
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null
+      const pending = pointerRef.current
+      if (!pending) return
+      positionTooltip()
+      const next = nearestTelemetryIndex(chart.points, chart.eligibleIndices, pending.target)
+      if (next === hoverIndexRef.current) return
+      hoverIndexRef.current = next
+      setHoverIndex(next)
+      onTelemetryHover(next == null ? null : telemetryPosition(chart.points[next]))
+    })
   }
 
   const toggleStyle = (active: boolean): React.CSSProperties => ({
@@ -71,7 +119,7 @@ function DriveTelemetryChart({ series, units }: { series: SeriesPoint[]; units: 
 
   return (
     <>
-      <div style={{ position: 'relative' }}>
+      <div ref={chartRef} style={{ position: 'relative' }}>
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="140" preserveAspectRatio="none" style={{ display: 'block', touchAction: 'none' }}>
           {GRID_YS.map((gy) => (
             <line key={gy} x1={PL} y1={gy} x2={PL + IW} y2={gy} stroke="var(--chart-grid)" strokeWidth="1" />
@@ -89,7 +137,7 @@ function DriveTelemetryChart({ series, units }: { series: SeriesPoint[]; units: 
               {showBattery && point.soc != null && <circle cx={chart.x(point.time)} cy={chart.batteryY(point.soc)} r="2.8" fill="#fff" stroke="#e6a94f" strokeWidth="1.5" />}
             </>
           )}
-          <rect x={PL} y={PT} width={IW} height={IH} fill="transparent" onPointerMove={move} onPointerLeave={() => setHoverIndex(null)} />
+          <rect x={PL} y={PT} width={IW} height={IH} fill="transparent" onPointerMove={move} onPointerLeave={clearHover} />
         </svg>
         {showSpeed && GRID_YS.map((gy, i) => (
           <span key={gy} style={{ position: 'absolute', left: 4, top: (gy / H) * 140, transform: 'translateY(-100%)', fontSize: 8.5, fontFamily: "'JetBrains Mono',monospace", color: 'var(--faint)', pointerEvents: 'none' }}>
@@ -101,13 +149,15 @@ function DriveTelemetryChart({ series, units }: { series: SeriesPoint[]; units: 
             {gridSoc(gy)}{i === 0 ? '%' : ''}
           </span>
         ))}
-        {point && (
-          <div style={{ position: 'absolute', top: 8, left: `${Math.max(8, Math.min(70, (chart.x(point.time) / W) * 100))}%`, transform: 'translateX(-50%)', minWidth: 126, padding: '6px 7px', borderRadius: 6, background: 'rgba(16,18,24,0.94)', border: '1px solid var(--border-chip)', fontSize: 9, lineHeight: 1.45, fontFamily: "'JetBrains Mono',monospace", color: 'var(--legend)', pointerEvents: 'none' }}>
-            <div>{elapsedLabel(point.time - chart.start)} · {new Date(point.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}</div>
-            {showSpeed && <div>Speed: {point.speed == null ? '—' : `${speed(point.speed)} ${speedUnit}`}</div>}
-            {showBattery && <div>Battery: {point.soc == null ? '—' : `${Math.round(point.soc)}%`}</div>}
-          </div>
-        )}
+        <div ref={tooltipRef} style={{ position: 'absolute', top: 0, left: 0, visibility: point ? 'visible' : 'hidden', minWidth: 126, padding: '6px 7px', borderRadius: 6, background: 'rgba(16,18,24,0.98)', border: '1px solid var(--border-chip)', fontSize: 9, lineHeight: 1.45, fontFamily: "'JetBrains Mono',monospace", color: 'var(--legend)', pointerEvents: 'none', willChange: 'transform' }}>
+          {point && (
+            <>
+              <div>{elapsedLabel(point.time - chart.start)} · {new Date(point.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}</div>
+              {showSpeed && <div>Speed: {point.speed == null ? '—' : `${speed(point.speed)} ${speedUnit}`}</div>}
+              {showBattery && <div>Battery: {point.soc == null ? '—' : `${Math.round(point.soc)}%`}</div>}
+            </>
+          )}
+        </div>
         {!showSpeed && !showBattery && (
           <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', fontSize: 10, color: 'var(--faint)', fontFamily: "'JetBrains Mono',monospace", pointerEvents: 'none' }}>
             Turn on Speed or Battery
@@ -120,11 +170,11 @@ function DriveTelemetryChart({ series, units }: { series: SeriesPoint[]; units: 
         <span>End</span>
       </div>
       <div style={{ display: 'flex', gap: 14, marginTop: 9 }}>
-        <button type="button" aria-pressed={showSpeed} onClick={() => setShowSpeed((visible) => !visible)} style={toggleStyle(showSpeed)}>
+        <button type="button" aria-pressed={showSpeed} onClick={() => { clearHover(); setShowSpeed((visible) => !visible) }} style={toggleStyle(showSpeed)}>
           <span style={{ width: 14, height: 3, borderRadius: 2, background: '#5f7fd6' }} />
           <span style={{ fontSize: 10.5 }}>Speed</span>
         </button>
-        <button type="button" aria-pressed={showBattery} onClick={() => setShowBattery((visible) => !visible)} style={toggleStyle(showBattery)}>
+        <button type="button" aria-pressed={showBattery} onClick={() => { clearHover(); setShowBattery((visible) => !visible) }} style={toggleStyle(showBattery)}>
           <span style={{ width: 14, height: 0, borderTop: '2px dashed #e6a94f' }} />
           <span style={{ fontSize: 10.5 }}>Battery %</span>
         </button>
@@ -145,7 +195,7 @@ function StatCard({ label, value, unit }: { label: string; value: string | numbe
   )
 }
 
-export default function DetailPanel({ detail, loading, error, units, onClose, onPrev, onNext }: Props) {
+export default function DetailPanel({ detail, loading, error, units, onClose, onPrev, onNext, onTelemetryHover }: Props) {
   const d = detail
   const isCharge = d?.kind === 'charge'
   const dist = (km: number) => (kmToUnit(km, units) >= 100 ? fmtInt(kmToUnit(km, units)) : kmToUnit(km, units).toFixed(1))
@@ -287,7 +337,7 @@ export default function DetailPanel({ detail, loading, error, units, onClose, on
                   </div>
                 </>
               ) : driveSeries ? (
-                <DriveTelemetryChart key={d.id} series={driveSeries} units={units} />
+                <DriveTelemetryChart key={d.id} series={driveSeries} units={units} onTelemetryHover={onTelemetryHover} />
               ) : (
                 <div style={{ fontSize: 11, color: 'var(--faint)', fontFamily: "'JetBrains Mono',monospace", padding: '20px 0' }}>
                   No samples recorded for this {isCharge ? 'charge' : 'drive'}.
