@@ -158,7 +158,13 @@ const MapView = forwardRef<MapViewHandle, Props>(function MapView(
     const map = mapRef.current
     if (!map || !loadedRef.current) return
     if (!telemetryMarkerRef.current) {
-      telemetryMarkerRef.current = new maplibregl.Marker({ element: telemetryMarkerEl() }).addTo(map)
+      // MapLibre calls its position update during addTo(), so coordinates must
+      // be assigned first or the half-added marker can break later map moves.
+      const marker = new maplibregl.Marker({ element: telemetryMarkerEl() })
+        .setLngLat([position.lng, position.lat])
+      telemetryMarkerRef.current = marker
+      marker.addTo(map)
+      return
     }
     telemetryMarkerRef.current.setLngLat([position.lng, position.lat])
   }

@@ -87,7 +87,11 @@ export function nearestTelemetryIndex(points: TelemetryPoint[], eligibleIndices:
 }
 
 export function telemetryPosition(point: TelemetryPoint): TelemetryPosition | null {
-  if (point.lng == null || point.lat == null || !Number.isFinite(point.lng) || !Number.isFinite(point.lat)) return null
+  if (
+    point.lng == null || point.lat == null ||
+    !Number.isFinite(point.lng) || !Number.isFinite(point.lat) ||
+    point.lng < -180 || point.lng > 180 || point.lat < -90 || point.lat > 90
+  ) return null
   return { lng: point.lng, lat: point.lat, timestamp: point.time }
 }
 

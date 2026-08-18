@@ -40,6 +40,16 @@ describe('telemetry scrub helpers', () => {
     expect(telemetryPosition(chart.points[1])).toBeNull()
   })
 
+  it('rejects coordinates outside MapLibre geographic bounds', () => {
+    const chart = prepareTelemetryChart([
+      { t: '2026-01-01T00:00:00Z', speed: 10, soc: 80, lng: 181, lat: 28.1 },
+      { t: '2026-01-01T00:00:01Z', speed: 11, soc: 79, lng: -82.4, lat: 91 },
+    ], true, true)!
+
+    expect(telemetryPosition(chart.points[0])).toBeNull()
+    expect(telemetryPosition(chart.points[1])).toBeNull()
+  })
+
   it('keeps the cursor-following tooltip inside every chart edge', () => {
     expect(tooltipPlacement(2, 2, 300, 140, 126, 48)).toEqual({ left: 12, top: 12 })
     expect(tooltipPlacement(298, 138, 300, 140, 126, 48)).toEqual({ left: 162, top: 80 })

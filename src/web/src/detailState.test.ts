@@ -7,6 +7,8 @@ const overview: Activity = {
   coords: [[1, 2, 3], [4, 5, 6]], durMin: 1, socStart: 80, socEnd: 79, kWh: 1,
 }
 const detail: ActivityDetail = { ...overview, coords: [[1, 2, 3], [2, 3, 4], [4, 5, 6]] }
+const overview2: Activity = { ...overview, id: 'd2', title: 'B → C', coords: [[7, 8, 9], [10, 11, 12]] }
+const detail2: ActivityDetail = { ...overview2, coords: [[7, 8, 9], [8, 9, 10], [10, 11, 12]] }
 
 describe('DetailCache', () => {
   it('reuses recent details, expires old ones, and evicts the least recently used entry', () => {
@@ -31,6 +33,12 @@ describe('focusedMapActivity', () => {
     expect(focusedMapActivity([overview], null, detail)).toBeNull()
     expect(focusedMapActivity([overview], 'd2', detail)).toBeNull()
     expect(focusedMapActivity([], 'd1', detail)).toBeNull()
+  })
+
+  it('clears a closed drive and fully replaces it when another drive opens', () => {
+    expect(focusedMapActivity([overview, overview2], null, detail)).toBeNull()
+    expect(focusedMapActivity([overview, overview2], 'd2', detail)).toBe(overview2)
+    expect(focusedMapActivity([overview, overview2], 'd2', detail2)).toBe(detail2)
   })
 })
 
