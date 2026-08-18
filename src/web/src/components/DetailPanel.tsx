@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
-import { api, type ActivityDetail, type CurvePoint, type SeriesPoint } from '../api'
+import type { ActivityDetail, CurvePoint, SeriesPoint } from '../api'
 import { feedDate, fmtHShort, fmtInt, kmToUnit } from '../format'
 
 type Props = {
-  id: string
+  detail: ActivityDetail | null
+  loading: boolean
+  error: string | null
   units: 'km' | 'mi'
   onClose: () => void
   onPrev: () => void
@@ -65,23 +66,7 @@ function StatCard({ label, value, unit }: { label: string; value: string | numbe
   )
 }
 
-export default function DetailPanel({ id, units, onClose, onPrev, onNext }: Props) {
-  const [detail, setDetail] = useState<ActivityDetail | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let stale = false
-    setDetail(null)
-    setError(null)
-    api
-      .detail(id)
-      .then((d) => !stale && setDetail(d))
-      .catch((e) => !stale && setError(String(e)))
-    return () => {
-      stale = true
-    }
-  }, [id])
-
+export default function DetailPanel({ detail, loading, error, units, onClose, onPrev, onNext }: Props) {
   const d = detail
   const isCharge = d?.kind === 'charge'
   const dist = (km: number) => (kmToUnit(km, units) >= 100 ? fmtInt(kmToUnit(km, units)) : kmToUnit(km, units).toFixed(1))
@@ -127,7 +112,7 @@ export default function DetailPanel({ id, units, onClose, onPrev, onNext }: Prop
             <span style={{ fontSize: 11, color: 'var(--muted)', fontFamily: "'JetBrains Mono',monospace" }}>{d ? feedDate(d.date) : ''}</span>
           </div>
           <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-strong)', marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {d?.title ?? (error ? 'Not found' : 'Loading…')}
+            {d?.title ?? (error ? 'Not found' : loading ? 'Loading…' : 'Not found')}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 4, flex: '0 0 auto' }}>

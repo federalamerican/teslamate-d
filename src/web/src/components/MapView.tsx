@@ -1,7 +1,8 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import maplibregl from 'maplibre-gl'
-import type { Activity } from '../api'
+import type { Activity, ActivityDetail } from '../api'
 import { kmToUnit } from '../format'
+import { focusedMapActivity } from '../detailState'
 
 type Props = {
   styleUrl: string
@@ -19,6 +20,8 @@ type Props = {
   units: 'km' | 'mi'
   /** activity whose detail panel is open — its marker gets the active ring */
   detailId: string | null
+  /** on-demand, higher-fidelity route for the active individual drive */
+  activeDetail: ActivityDetail | null
   /** a detail/trip panel is overlaying the left side of the map */
   panelOpen: boolean
   /** the trip panel gets a little more breathing room than activity detail */
@@ -46,11 +49,6 @@ function boundsOf(acts: Activity[]): Bounds | null {
   }
   if (!isFinite(minX)) return null
   return [[minX, minY], [maxX, maxY]]
-}
-
-function focusedActivityFor(all: Activity[], detailId: string | null): Activity | null {
-  if (!detailId) return null
-  return all.find((a) => a.id === detailId) ?? null
 }
 
 // The feed is newest first, so the first activity with coordinates provides
@@ -112,7 +110,7 @@ function endpointEl(color: string): HTMLDivElement {
 }
 
 export default function MapView(
-  { styleUrl, allActivities, fitVersion, visible, loading, hasSelection, showBadge, selSummary, units, detailId, panelOpen, tripSummaryOpen, onOpenDetail, children }: Props,
+  { styleUrl, allActivities, fitVersion, visible, loading, hasSelection, showBadge, selSummary, units, detailId, activeDetail, panelOpen, tripSummaryOpen, onOpenDetail, children }: Props,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
@@ -130,10 +128,20 @@ export default function MapView(
   hasSelectionRef.current = hasSelection
   const detailIdRef = useRef(detailId)
   detailIdRef.current = detailId
+  const activeDetailRef = useRef(activeDetail)
+  activeDetailRef.current = activeDetail
   const panelOpenRef = useRef(panelOpen)
   panelOpenRef.current = panelOpen
   const onOpenDetailRef = useRef(onOpenDetail)
   onOpenDetailRef.current = onOpenDetail
+  const focusedActivity = focusedMapActivity(allActivities, detailId, activeDetail)
+  // While an individual activity is open, history pages can continue arriving
+  // without rebuilding the selected route's GeoJSON on every publish.
+  const focusedActivities = useMemo(
+    () => (focusedActivity ? [focusedActivity] : null),
+    [focusedActivity],
+  )
+  const renderedActivities = focusedActivities ?? visible
 
   // Detail and Trip Summary panels overlay the left ~380px of the map. Plain
   // checkbox selections deliberately opt out so they remain map-centered.
@@ -260,7 +268,7 @@ export default function MapView(
       // Test/debug hook (see __dash below).
       ;(window as unknown as Record<string, unknown>).__dashMap = map
       loadedRef.current = true
-      const focusedActivity = focusedActivityFor(allRef.current, detailIdRef.current)
+      const focusedActivity = focusedMapActivity(allRef.current, detailIdRef.current, activeDetailRef.current)
       render(focusedActivity ? [focusedActivity] : visibleRef.current, hasSelectionRef.current, detailIdRef.current)
       if (focusedActivity) fitActivity(focusedActivity)
       else fitDefault()
@@ -342,12 +350,11 @@ export default function MapView(
   }
 
   useEffect(() => {
-    const focusedActivity = focusedActivityFor(allActivities, detailId)
-    render(focusedActivity ? [focusedActivity] : visible, hasSelection, detailId)
+    render(renderedActivities, hasSelection, detailId)
 
     const focusedId = focusedActivity?.id ?? null
     const previousFocusedId = focusedActivityRef.current
-    const selectionKey = hasSelection ? visible.map((a) => a.id).join('|') : null
+    const selectionKey = !focusedActivity && hasSelection ? renderedActivities.map((a) => a.id).join('|') : null
     const previousSelectionKey = selectionKeyRef.current
     const panelChanged = panelOpenStateRef.current !== panelOpen
     const tripSummaryChanged = tripSummaryOpenStateRef.current !== tripSummaryOpen
@@ -359,12 +366,12 @@ export default function MapView(
     if (focusedActivity) {
       if (focusedId !== previousFocusedId || panelChanged) fitActivity(focusedActivity)
     } else if (hasSelection) {
-      if (selectionKey !== previousSelectionKey || previousFocusedId || panelChanged || tripSummaryChanged) fitActivities(visible)
+      if (selectionKey !== previousSelectionKey || previousFocusedId || panelChanged || tripSummaryChanged) fitActivities(renderedActivities)
     } else if (previousSelectionKey || previousFocusedId) {
       fitDefault(true)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, allActivities, hasSelection, detailId, panelOpen, tripSummaryOpen])
+  }, [renderedActivities, focusedActivity, hasSelection, detailId, panelOpen, tripSummaryOpen])
 
   // Re-fit when App asks for it (new range's first page, or history finished
   // streaming) — not on every appended page.

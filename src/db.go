@@ -485,8 +485,16 @@ func (d *DB) Detail(ctx context.Context, id string) (*Detail, error) {
 			return nil, err
 		}
 		det := &Detail{Activity: acts[0]}
-		det.Series, err = d.driveSeries(ctx, num)
-		return det, err
+		points, err := d.driveDetailPoints(ctx, num)
+		if err != nil {
+			return nil, err
+		}
+		det.Coords = make([][]float64, 0, len(points))
+		for _, p := range points {
+			det.Coords = append(det.Coords, []float64{p.Lng, p.Lat, p.Speed})
+		}
+		det.Series = detailSeries(points)
+		return det, nil
 	}
 	acts, err := d.chargeFeed(ctx, all, 1, all.To, &num)
 	if err != nil || len(acts) == 0 {
@@ -499,34 +507,69 @@ func (d *DB) Detail(ctx context.Context, id string) (*Detail, error) {
 	return det, nil
 }
 
-// driveSeries samples speed and battery level over the drive, thinned in SQL
-// to ~48 points for the panel chart.
-func (d *DB) driveSeries(ctx context.Context, driveID int) ([]SeriesPoint, error) {
+// maxDetailTracePoints keeps an exceptional drive from creating an excessive
+// number of MapLibre features. Normal drives retain every recorded position.
+const maxDetailTracePoints = 10_000
+
+const detailSeriesPoints = 48
+
+type driveDetailPoint struct {
+	T     time.Time
+	Lng   float64
+	Lat   float64
+	Speed float64
+	Soc   float64
+}
+
+// driveDetailPoints returns the detailed route and derives the compact panel
+// series from the same ordered data. The overview trace remains separate and
+// simplified in traces.
+func (d *DB) driveDetailPoints(ctx context.Context, driveID int) ([]driveDetailPoint, error) {
 	const q = `
-SELECT date, COALESCE(speed,0)::float8, COALESCE(battery_level,0)::float8
+SELECT date, longitude, latitude, speed, battery_level
 FROM (
-  SELECT p.date, p.speed, p.battery_level,
+  SELECT p.date, p.longitude::float8 AS longitude, p.latitude::float8 AS latitude,
+         COALESCE(p.speed,0)::float8 AS speed, COALESCE(p.battery_level,0)::float8 AS battery_level,
          row_number() OVER (ORDER BY p.date) AS rn,
          count(*)     OVER () AS n
   FROM positions p
   WHERE p.drive_id = $1
+    AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
 ) s
-WHERE (rn - 1) % GREATEST(1, n / 48) = 0 OR rn = n
-ORDER BY date`
-	rows, err := d.pool.Query(ctx, q, driveID)
+WHERE n <= $2
+   OR rn = 1
+   OR rn = n
+   OR FLOOR(((rn - 1)::numeric * ($2 - 1)) / NULLIF(n - 1, 0))
+      <> FLOOR(((rn - 2)::numeric * ($2 - 1)) / NULLIF(n - 1, 0))
+ORDER BY rn`
+	rows, err := d.pool.Query(ctx, q, driveID, maxDetailTracePoints)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []SeriesPoint
+	var out []driveDetailPoint
 	for rows.Next() {
-		var p SeriesPoint
-		if err := rows.Scan(&p.T, &p.Speed, &p.Soc); err != nil {
+		var p driveDetailPoint
+		if err := rows.Scan(&p.T, &p.Lng, &p.Lat, &p.Speed, &p.Soc); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+func detailSeries(pts []driveDetailPoint) []SeriesPoint {
+	if len(pts) == 0 {
+		return nil
+	}
+	stride := max(1, len(pts)/detailSeriesPoints)
+	out := make([]SeriesPoint, 0, detailSeriesPoints+1)
+	for i, p := range pts {
+		if i%stride == 0 || i == len(pts)-1 {
+			out = append(out, SeriesPoint{T: p.T, Speed: p.Speed, Soc: p.Soc})
+		}
+	}
+	return out
 }
 
 // chargeCurve fills the power-vs-SoC curve (mean power per battery percent)

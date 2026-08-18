@@ -106,13 +106,13 @@ func gzipResponses(next http.Handler) http.Handler {
 			return
 		}
 		defer gz.Close()
-		next.ServeHTTP(&gzipResponseWriter{ResponseWriter: w, Writer: gz}, r)
+		next.ServeHTTP(&gzipResponseWriter{ResponseWriter: w, writer: gz}, r)
 	})
 }
 
 type gzipResponseWriter struct {
 	http.ResponseWriter
-	*gzip.Writer
+	writer *gzip.Writer
 }
 
 func (w *gzipResponseWriter) WriteHeader(code int) {
@@ -122,7 +122,7 @@ func (w *gzipResponseWriter) WriteHeader(code int) {
 
 func (w *gzipResponseWriter) Write(b []byte) (int, error) {
 	w.Header().Del("Content-Length")
-	return w.Writer.Write(b)
+	return w.writer.Write(b)
 }
 
 func acceptsGzip(header string) bool {

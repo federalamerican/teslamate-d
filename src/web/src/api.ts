@@ -68,8 +68,8 @@ export type ActivityDetail = Activity & {
 
 export type Window = { from?: string; to?: string }
 
-async function get<T>(url: string): Promise<T> {
-  const res = await fetch(url)
+async function get<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(url, { signal })
   if (!res.ok) throw new Error(`${url}: ${res.status}`)
   return res.json()
 }
@@ -90,5 +90,5 @@ export const api = {
   summary: (carId: number | null, win: Window) => get<Summary>(`/api/summary${query(carId, win)}`),
   activities: (carId: number | null, win: Window, before?: string) =>
     get<Activity[]>(`/api/activities${query(carId, win, before ? { before } : {})}`),
-  detail: (id: string) => get<ActivityDetail>(`/api/activities/${encodeURIComponent(id)}`),
+  detail: (id: string, signal?: AbortSignal) => get<ActivityDetail>(`/api/activities/${encodeURIComponent(id)}`, signal),
 }

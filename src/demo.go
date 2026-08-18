@@ -261,6 +261,7 @@ func (s *demoStore) Detail(ctx context.Context, id string) (*Detail, error) {
 				continue
 			}
 			det := &Detail{Activity: s.driveActivity(d)}
+			det.Coords = d.coords
 			// Speed comes from the trace; SoC declines linearly for demo data.
 			n := len(d.coords)
 			for i, c := range d.coords {

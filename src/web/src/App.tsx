@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { api, type Activity, type AppConfig, type Car, type Summary, type Window } from './api'
+import { api, type Activity, type ActivityDetail, type AppConfig, type Car, type Summary, type Window } from './api'
 import { daysAgo, isoDay, rangeLabel, type RangeKey } from './format'
 import Header from './components/Header'
 import KpiGrid from './components/KpiGrid'
@@ -8,9 +8,12 @@ import SelectionBar from './components/SelectionBar'
 import MapView from './components/MapView'
 import DetailPanel from './components/DetailPanel'
 import TripSummary from './components/TripSummary'
+import { DetailCache, isCurrentDetailResponse } from './detailState'
 
 const FEED_LIMIT = 200
 const HISTORY_PUBLISH_INTERVAL_MS = 200
+const DETAIL_CACHE_TTL_MS = 3 * 60 * 1000
+const DETAIL_CACHE_MAX_ENTRIES = 8
 
 export type TypeFilter = 'all' | 'drive' | 'charge'
 
@@ -46,6 +49,9 @@ export default function App() {
   const [hideHomeDest, setHideHomeDest] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
   const [detailId, setDetailId] = useState<string | null>(null)
+  const [detail, setDetail] = useState<ActivityDetail | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
   const [showTrip, setShowTrip] = useState(false)
   // Shift-click range-select: the last plainly-clicked row is the anchor.
   const anchorRef = useRef<number | null>(null)
@@ -56,6 +62,9 @@ export default function App() {
   // Without a shared link, the server's featured selection (demo mode's
   // showcase trip) is preselected once on the first feed load.
   const featuredDoneRef = useRef(false)
+  const detailCacheRef = useRef(new DetailCache(DETAIL_CACHE_MAX_ENTRIES, DETAIL_CACHE_TTL_MS))
+  const currentDetailIdRef = useRef<string | null>(null)
+  currentDetailIdRef.current = detailId
 
   const [summary, setSummary] = useState<Summary | null>(null)
   const [activities, setActivities] = useState<Activity[]>([])
@@ -152,6 +161,43 @@ export default function App() {
     }
   }, [config, carId, win])
 
+  // Detail routes are loaded only for the active activity. A small timed LRU
+  // keeps quick re-selections instant without retaining an unbounded number of
+  // high-fidelity coordinate arrays in the browser.
+  useEffect(() => {
+    if (!detailId) {
+      setDetail(null)
+      setDetailLoading(false)
+      setDetailError(null)
+      return
+    }
+
+    const cached = detailCacheRef.current.get(detailId)
+    if (cached) {
+      setDetail(cached)
+      setDetailLoading(false)
+      setDetailError(null)
+      return
+    }
+    const controller = new AbortController()
+    setDetail(null)
+    setDetailLoading(true)
+    setDetailError(null)
+    api.detail(detailId, controller.signal)
+      .then((next) => {
+        if (!isCurrentDetailResponse(detailId, currentDetailIdRef.current, next.id, controller.signal.aborted)) return
+        detailCacheRef.current.set(next)
+        setDetail(next)
+      })
+      .catch((e: unknown) => {
+        if (!controller.signal.aborted && currentDetailIdRef.current === detailId) setDetailError(String(e))
+      })
+      .finally(() => {
+        if (!controller.signal.aborted && currentDetailIdRef.current === detailId) setDetailLoading(false)
+      })
+    return () => controller.abort()
+  }, [detailId])
+
   const units = config?.units ?? 'km'
 
   // Global filters (type + hide home/destination) drive both list and map.
@@ -206,7 +252,15 @@ export default function App() {
   }
 
   const openDetail = (id: string) => {
-    setDetailId((current) => (current === id ? null : id))
+    if (detailId === id) {
+      setDetailId(null)
+    } else {
+      const cached = detailCacheRef.current.get(id)
+      setDetail(cached)
+      setDetailLoading(!cached)
+      setDetailError(null)
+      setDetailId(id)
+    }
     setShowTrip(false)
   }
   const stepDetail = (dir: number) => {
@@ -302,6 +356,7 @@ export default function App() {
           selSummary={selSummary}
           units={units}
           detailId={detailId}
+          activeDetail={detail?.id === detailId ? detail : null}
           panelOpen={panelOpen}
           tripSummaryOpen={showTrip}
           onOpenDetail={openDetail}
@@ -309,7 +364,9 @@ export default function App() {
           {detailId != null && (
             <DetailPanel
               key={detailId}
-              id={detailId}
+              detail={detail?.id === detailId ? detail : null}
+              loading={detailLoading}
+              error={detailError}
               units={units}
               onClose={() => setDetailId(null)}
               onPrev={() => stepDetail(-1)}

@@ -9,14 +9,16 @@ import (
 )
 
 const (
-	feedDefaultLimit = 200
-	feedMaxLimit     = 1000
-	cacheTTL         = 3 * time.Minute
-	cacheMaxEntries  = 200
+	feedDefaultLimit      = 200
+	feedMaxLimit          = 1000
+	cacheTTL              = 3 * time.Minute
+	cacheMaxEntries       = 200
+	detailCacheMaxEntries = 16
 )
 
 func registerAPI(mux *http.ServeMux, s Store, cfg Config) {
-	cache := newRespCache()
+	cache := newRespCache(cacheMaxEntries)
+	detailCache := newRespCache(detailCacheMaxEntries)
 
 	mux.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -69,7 +71,7 @@ func registerAPI(mux *http.ServeMux, s Store, cfg Config) {
 
 	// Detail payload for one activity (drive series / charge curve).
 	mux.HandleFunc("GET /api/activities/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if v, ok := cache.get(r.URL.RequestURI()); ok {
+		if v, ok := detailCache.get(r.URL.RequestURI()); ok {
 			respond(w, v, nil)
 			return
 		}
@@ -82,7 +84,7 @@ func registerAPI(mux *http.ServeMux, s Store, cfg Config) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown activity"})
 			return
 		}
-		cache.put(r.URL.RequestURI(), v)
+		detailCache.put(r.URL.RequestURI(), v)
 		respond(w, v, nil)
 	})
 }
@@ -139,8 +141,9 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 // respCache is a tiny TTL cache for JSON-able responses.
 type respCache struct {
-	mu sync.Mutex
-	m  map[string]cacheEntry
+	mu         sync.Mutex
+	m          map[string]cacheEntry
+	maxEntries int
 }
 
 type cacheEntry struct {
@@ -148,7 +151,9 @@ type cacheEntry struct {
 	exp time.Time
 }
 
-func newRespCache() *respCache { return &respCache{m: map[string]cacheEntry{}} }
+func newRespCache(maxEntries int) *respCache {
+	return &respCache{m: map[string]cacheEntry{}, maxEntries: maxEntries}
+}
 
 func (c *respCache) get(key string) (any, bool) {
 	c.mu.Lock()
@@ -164,14 +169,14 @@ func (c *respCache) get(key string) (any, bool) {
 func (c *respCache) put(key string, v any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.m) >= cacheMaxEntries {
+	if len(c.m) >= c.maxEntries {
 		now := time.Now()
 		for k, e := range c.m {
 			if now.After(e.exp) {
 				delete(c.m, k)
 			}
 		}
-		if len(c.m) >= cacheMaxEntries {
+		if len(c.m) >= c.maxEntries {
 			c.m = map[string]cacheEntry{}
 		}
 	}

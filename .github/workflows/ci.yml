@@ -20,6 +20,8 @@ jobs:
           cache-dependency-path: src/web/package-lock.json
       - run: npm ci
         working-directory: src/web
+      - run: npm test
+        working-directory: src/web
       - run: npm run build
         working-directory: src/web
       - uses: actions/setup-go@v5
@@ -27,4 +29,5 @@ jobs:
           go-version: "1.22"
           cache: true
       - run: go vet ./...
+      - run: go test ./...
       - run: go build -o /dev/null ./src
