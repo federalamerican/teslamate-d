@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import maplibregl from 'maplibre-gl'
 import type { Activity, ActivityDetail } from '../api'
 import { kmToUnit } from '../format'
-import { focusedMapActivity } from '../detailState'
+import { detailRouteSourceOptions, focusedMapActivity, usesDetailedRoute } from '../detailState'
 
 type Props = {
   styleUrl: string
@@ -36,6 +36,7 @@ type Point = [number, number]
 const CURRENT_LOCATION_ZOOM = 12
 const ACTIVITY_FIT_PADDING = 73
 const TRIP_SUMMARY_FIT_PADDING = 88
+const emptyRouteData: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] }
 
 function boundsOf(acts: Activity[]): Bounds | null {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
@@ -135,6 +136,7 @@ export default function MapView(
   const onOpenDetailRef = useRef(onOpenDetail)
   onOpenDetailRef.current = onOpenDetail
   const focusedActivity = focusedMapActivity(allActivities, detailId, activeDetail)
+  const useDetailRoute = usesDetailedRoute(focusedActivity, activeDetail)
   // While an individual activity is open, history pages can continue arriving
   // without rebuilding the selected route's GeoJSON on every publish.
   const focusedActivities = useMemo(
@@ -241,7 +243,7 @@ export default function MapView(
     const ro = new ResizeObserver(() => map.resize())
     ro.observe(containerRef.current)
     map.on('load', () => {
-      map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      map.addSource('route', { type: 'geojson', data: emptyRouteData })
       map.addLayer({
         id: 'route-casing',
         type: 'line',
@@ -259,17 +261,45 @@ export default function MapView(
           'line-color': ['interpolate', ['linear'], ['get', 'speed'], 30, '#a9c0dd', 85, '#4f6bc0', 150, '#1b2b74'],
         },
       })
-      map.on('click', 'route-line', (e) => {
-        const aid = e.features?.[0]?.properties?.aid as string | undefined
-        if (aid) onOpenDetailRef.current(aid)
+      // Detailed routes are thousands of very short line features. Keep their
+      // GeoJSON source separate so MapLibre does not simplify them away at
+      // lower zooms; the overview source keeps its existing defaults.
+      map.addSource('detail-route', { type: 'geojson', data: emptyRouteData, ...detailRouteSourceOptions })
+      map.addLayer({
+        id: 'detail-route-casing',
+        type: 'line',
+        source: 'detail-route',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#ffffff', 'line-width': 7, 'line-opacity': 0.9 },
       })
-      map.on('mouseenter', 'route-line', () => { map.getCanvas().style.cursor = 'pointer' })
-      map.on('mouseleave', 'route-line', () => { map.getCanvas().style.cursor = '' })
+      map.addLayer({
+        id: 'detail-route-line',
+        type: 'line',
+        source: 'detail-route',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-width': 3.6,
+          'line-color': ['interpolate', ['linear'], ['get', 'speed'], 30, '#a9c0dd', 85, '#4f6bc0', 150, '#1b2b74'],
+        },
+      })
+      for (const layer of ['route-line', 'detail-route-line']) {
+        map.on('click', layer, (e) => {
+          const aid = e.features?.[0]?.properties?.aid as string | undefined
+          if (aid) onOpenDetailRef.current(aid)
+        })
+        map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer' })
+        map.on('mouseleave', layer, () => { map.getCanvas().style.cursor = '' })
+      }
       // Test/debug hook (see __dash below).
       ;(window as unknown as Record<string, unknown>).__dashMap = map
       loadedRef.current = true
       const focusedActivity = focusedMapActivity(allRef.current, detailIdRef.current, activeDetailRef.current)
-      render(focusedActivity ? [focusedActivity] : visibleRef.current, hasSelectionRef.current, detailIdRef.current)
+      render(
+        focusedActivity ? [focusedActivity] : visibleRef.current,
+        hasSelectionRef.current,
+        detailIdRef.current,
+        usesDetailedRoute(focusedActivity, activeDetailRef.current),
+      )
       if (focusedActivity) fitActivity(focusedActivity)
       else fitDefault()
     })
@@ -282,12 +312,15 @@ export default function MapView(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  function render(acts: Activity[], sel: boolean, activeId: string | null) {
+  function render(acts: Activity[], sel: boolean, activeId: string | null, detailed = false) {
     const map = mapRef.current
     if (!map || !loadedRef.current) return
-    const src = map.getSource('route') as maplibregl.GeoJSONSource | undefined
     const features = routeFeatures(acts)
-    src?.setData({ type: 'FeatureCollection', features })
+    const overviewSource = map.getSource('route') as maplibregl.GeoJSONSource | undefined
+    const detailSource = map.getSource('detail-route') as maplibregl.GeoJSONSource | undefined
+    const routeData: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features }
+    overviewSource?.setData(detailed ? emptyRouteData : routeData)
+    detailSource?.setData(detailed ? routeData : emptyRouteData)
 
     markersRef.current.forEach((m) => m.remove())
     markersRef.current = []
@@ -345,12 +378,13 @@ export default function MapView(
       visible: acts.length,
       hasSelection: sel,
       detailId: activeId,
+      routeSource: detailed ? 'detail-route' : 'route',
       ids: acts.map((a) => a.id),
     }
   }
 
   useEffect(() => {
-    render(renderedActivities, hasSelection, detailId)
+    render(renderedActivities, hasSelection, detailId, useDetailRoute)
 
     const focusedId = focusedActivity?.id ?? null
     const previousFocusedId = focusedActivityRef.current
@@ -371,7 +405,7 @@ export default function MapView(
       fitDefault(true)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [renderedActivities, focusedActivity, hasSelection, detailId, panelOpen, tripSummaryOpen])
+  }, [renderedActivities, focusedActivity, useDetailRoute, hasSelection, detailId, panelOpen, tripSummaryOpen])
 
   // Re-fit when App asks for it (new range's first page, or history finished
   // streaming) — not on every appended page.

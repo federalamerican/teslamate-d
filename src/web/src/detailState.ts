@@ -32,6 +32,11 @@ export function isCurrentDetailResponse(
   return !aborted && requestedId === currentId && responseId === requestedId
 }
 
+export const detailRouteSourceOptions = {
+  tolerance: 0,
+  maxzoom: 22,
+} as const
+
 // Detailed coordinates apply only to the individually open drive. Selection
 // and trip modes keep using the overview activities supplied to MapView.
 export function focusedMapActivity(
@@ -46,4 +51,11 @@ export function focusedMapActivity(
     return activeDetail
   }
   return overview
+}
+
+export function usesDetailedRoute(
+  focusedActivity: Activity | null,
+  activeDetail: ActivityDetail | null,
+): boolean {
+  return focusedActivity === activeDetail && activeDetail?.kind === 'drive' && (activeDetail.coords?.length ?? 0) >= 2
 }

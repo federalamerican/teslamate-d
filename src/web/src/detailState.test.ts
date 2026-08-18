@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Activity, ActivityDetail } from './api'
-import { DetailCache, focusedMapActivity, isCurrentDetailResponse } from './detailState'
+import { DetailCache, detailRouteSourceOptions, focusedMapActivity, isCurrentDetailResponse, usesDetailedRoute } from './detailState'
 
 const overview: Activity = {
   id: 'd1', kind: 'drive', title: 'A → B', sub: '', right: '', date: '2026-01-01T00:00:00Z',
@@ -40,5 +40,15 @@ describe('isCurrentDetailResponse', () => {
     expect(isCurrentDetailResponse('d1', 'd2', 'd1', false)).toBe(false)
     expect(isCurrentDetailResponse('d1', 'd1', 'd2', false)).toBe(false)
     expect(isCurrentDetailResponse('d1', 'd1', 'd1', true)).toBe(false)
+  })
+})
+
+describe('detailed route rendering', () => {
+  it('uses the unsimplified detail source only for the active resolved drive', () => {
+    expect(detailRouteSourceOptions).toEqual({ tolerance: 0, maxzoom: 22 })
+    expect(usesDetailedRoute(detail, detail)).toBe(true)
+    expect(usesDetailedRoute(overview, detail)).toBe(false)
+    expect(usesDetailedRoute(null, detail)).toBe(false)
+    expect(usesDetailedRoute(detail, null)).toBe(false)
   })
 })
